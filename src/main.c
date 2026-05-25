@@ -24,7 +24,13 @@ int main(int argc, char* argv[]) {
 
     SVL_p_free(&args);
 
-    StringView sv = SV_from_string("int a = 5 * 3 + 10 + 1 ;\nint b=a+5*(1+3);");
+    StringView sv = SV_from_string("int a: 5 * 3 + 10 + 1 ;\n" \
+        "int b: a+5*(1+3);\n" \
+        "int c: a = 2;\n" \
+        "if c then\n" \
+        "  int k: 5;\n" \
+        "end\n"
+        );
     process(&sv);
 
     return 0;
