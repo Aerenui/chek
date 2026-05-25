@@ -1,0 +1,12 @@
+/.idea
+*.o
+**/*.o
+/bin
+
+CMakeCache.txt
+cmake_install.cmake
+/CMakeFiles
+Makefile
+/Testing
+/cmake-build-*
+/.cmake
