@@ -57,5 +57,70 @@ StringView SVLV_inspect_back(StringViewListView*);
 bool SVLV_is_empty(StringViewListView*);
 
 
+// ---------------------------------------------------
+
+// #define ByteSeg_size 64
+// typedef struct {
+//     uint8_t array[ByteSeg_size];
+//     size_t cursor;
+//     size_t size;
+// } ByteSeg;
+//
+// typedef struct {
+//     ByteSeg* array;
+//     size_t len;
+//     size_t cursor;
+//     size_t cap;
+// } ByteSegList;
+//
+// typedef struct {
+//     size_t block_nth;
+//     size_t byte_nth;
+// } ByteSegList_BytePosition;
+//
+// ByteSeg BS_new(void);
+// ByteSegList BSL_new(void);
+//
+// void BS_print(ByteSeg*);
+//
+// void BS_write_byte(ByteSeg*, uint8_t);
+// size_t BS_get_cursor(ByteSeg*);
+// void BS_set_cursor(ByteSeg*, size_t);
+// bool BS_has_space(ByteSeg*);
+//
+// void BSL_write_byte(ByteSegList*, uint8_t);
+// ByteSegList_BytePosition BSL_get_cursor(ByteSegList*);
+// void BSL_set_cursor(ByteSegList*, ByteSegList_BytePosition);
+
+typedef struct {
+    uint8_t* array; // the data
+    size_t len; // how much we have
+    size_t cap; // how much we can store
+    size_t cursor; // where are we writing
+} ByteSeg;
+#define ByteSeg_init_cap 64
+
+ByteSeg BS_new(void);
+void BS_free(ByteSeg*);
+void BS_print(const ByteSeg*);
+void BS_write(ByteSeg*, uint8_t);
+void BS_write_array(ByteSeg* bs, size_t size, uint8_t array[restrict size]);
+size_t BS_get_cursor(ByteSeg*);
+void BS_set_cursor(ByteSeg*, size_t);
+
+
+
+//
+// typedef struct {
+//     ByteSeg* array;
+//     size_t len;
+//     size_t cap;
+//     size_t cursor;
+// } ByteSegList;
+// #define ByteSegList_init_cap 64
+//
+// ByteSegList BSL_new(void);
+// void BSL_free(ByteSegList*);
+// void BSL_write(ByteSegList*, uint8_t);
 
 #endif //SIMPLECOMPILERINC_2_UTILS_H
