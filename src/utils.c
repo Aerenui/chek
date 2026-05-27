@@ -4,6 +4,9 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
+#include <limits.h>
+#include <stdlib.h>
+
 
 char *read_file(const char *path, size_t *out_len) {
     FILE *f = fopen(path, "rb");
@@ -43,6 +46,29 @@ char *read_file(const char *path, size_t *out_len) {
 
     return buf;
 }
+
+
+void resolve_import_path(const char* importing_file, const char* import_path, char* out) {
+    char dir[PATH_MAX];
+    // strncpy(dir, importing_file, PATH_MAX); // PATH_MAX is guaranteed by realpath that produced import_path
+    strcpy(dir, importing_file);
+
+    char* last_slash = strrchr(dir, '/');
+    if (last_slash) {
+        *(last_slash + 1) = '\0';
+    } else {
+        strcpy(dir, "./");
+    }
+
+    char combined[PATH_MAX];
+    snprintf(combined, PATH_MAX, "%s%s", dir, import_path);
+
+    realpath(combined, out);
+}
+
+
+
+
 
 inline StringView SV_from_string(const char *s) {
     return (StringView){
@@ -102,6 +128,15 @@ StringViewList SV_p_split_by_char(const StringView* sv, const char c) {
     if (buff_start < sv->len) {
         SVL_p_push(&ot, SV_lrslice_from_SV(sv, buff_start, sv->len - buff_start));
     }
+    return ot;
+}
+
+
+const char* SV_to__c_string(const StringView* sv) {
+    char* ot = malloc(sv->len+1);
+    assert(ot != NULL);
+    memcpy(ot, sv->start, sv->len);
+    ot[sv->len] = 0;
     return ot;
 }
 

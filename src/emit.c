@@ -287,7 +287,7 @@ void FR_register_function(FunctionsRegistry* fr, Function f) {
     }
     if (fr->len + 1 > fr->cap) {
         fr->cap *= 2;
-        Function* new_array = realloc(fr->array,sizeof(Function)*FunctionsRegistry_default_cap);
+        Function* new_array = realloc(fr->array,sizeof(Function)*fr->cap);
         assert(new_array != NULL);
         fr->array = new_array;
     }
@@ -373,9 +373,9 @@ void resolve_function_calls(uint8_t* array, size_t addr_offset, FunctionsRegistr
         //     continue;
         // }
 
-        size_t patch_site_addr = addr_offset + patch->offset;
+        // size_t patch_site_addr = addr_offset + patch->offset;
         uint64_t value;
-        printf("<%.*s> patch->offset=%lu, target=%lu = 0x%x\n", (int)patch->name.len, patch->name.start, patch->offset, target, (uint8_t)target);
+        // printf("<%.*s> patch->offset=%lu, target=%lu = 0x%x\n", (int)patch->name.len, patch->name.start, patch->offset, target, (uint8_t)target);
 
         if (patch->relative) {
             // value = (uint64_t)(target - (patch_site_addr + patch->bit_size));

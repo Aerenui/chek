@@ -1,0 +1,14 @@
+int print_int_intern(n)
+    int q: n / 10;
+    int d: n % 10;
+    int c: d + 48;
+    if 0 < q then
+        call print_int_intern(q) into q;
+    end
+    print c;
+    return 0;
+end
+
+void print_int(n)
+    call print_int_intern(n);
+end

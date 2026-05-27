@@ -10,3 +10,5 @@ Makefile
 /Testing
 /cmake-build-*
 /.cmake
+
+out

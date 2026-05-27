@@ -333,6 +333,7 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view) {
     // caller decides what to do with last (store, return, etc.)
 
     // SVL_p_free(&stack);
+    LS_free(&stack2);
     SVL_p_free(&ot);
     SVL_p_free(&operator_stack);
     // exit(10);

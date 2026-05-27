@@ -33,7 +33,7 @@ if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_C_COMPILER_ID MATCHES "Clang")
     )
 
     target_compile_options(main PRIVATE
-            $<$<CONFIG:Debug>:   -O0 -g>
+            $<$<CONFIG:Debug>:   -O0 -g -fsanitize=address>
             $<$<CONFIG:Release>: -O2 -DNDEBUG>
     )
 endif()
@@ -44,6 +44,7 @@ find_package(mimalloc REQUIRED)
 target_link_libraries(main PRIVATE
         $<$<CONFIG:Release>:mimalloc>
 )
+target_link_options(main PRIVATE $<$<CONFIG:Debug>:-fsanitize=address>)
 
 #message(STATUS "Binary dir: ${PROJECT_BINARY_DIR}")
 #message(STATUS "Output dir: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")

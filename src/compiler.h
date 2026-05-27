@@ -23,7 +23,7 @@ int alloc_tmp_stack_slot(StackFrame*);
 StackFrame* get_frame(void);
 int get_stack_frame_max(StackFrame*);
 
-void process(const StringView*);
+void process(const StringView*, StringView*);
 void create_frame(void);
 void resolve_frame(void);
 

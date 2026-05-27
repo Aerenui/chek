@@ -1,3 +1,4 @@
+
 int print_int(n)
     int q: n / 10;
     int d: n % 10;
@@ -16,3 +17,4 @@ int main()
     print 10;
     return 0;
 end
+

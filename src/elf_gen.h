@@ -8,7 +8,7 @@
 #include <stddef.h>
 #include "emit.h"
 
-void write_elf64(const char*, const uint8_t*, size_t, uint64_t);
+void write_elf64(const char*, const uint8_t*, size_t, uint64_t, FunctionsRegistry*);
 
 
 #endif //SIMPLECOMPILERINC_2_ELF_GEN_H

@@ -8,6 +8,7 @@
 
 
 char* read_file(const char*, size_t*);
+void resolve_import_path(const char* importing_file, const char* import_path, char* out);
 
 typedef struct {
     const char* start;
@@ -25,6 +26,8 @@ void SV_p_printf(const StringView*);
 bool SV__pp_cmp_eq(const StringView*, const StringView*);
 bool SV__pv_cmp_eq(const StringView*, const char*, const size_t);
 
+
+const char* SV_to__c_string(const StringView*);
 
 
 // ---------------------------------------------------

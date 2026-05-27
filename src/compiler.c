@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <linux/limits.h>
 
 #include "elf_gen.h"
 #include "expr.h"
@@ -17,6 +18,12 @@ LabelList labels;
 
 static FunctionsRegistry functions_registry;
 static FunctionCallPatchList function_patch_list;
+
+static StringViewList import_table;
+
+char* * content_ptrs;
+size_t content_ptrs_len = 0;
+size_t content_ptrs_cap = 4;
 
 void get_stmt(StringViewListView*, bool);
 
@@ -80,7 +87,7 @@ int declare_var(StringView name) {
 }
 
 
-StringViewList p_tokenize(const StringView* sv) {
+/*StringViewList p_tokenize(const StringView* sv) {
     StringViewList ot = SVL_new();
     size_t i = 0;
     while (i < sv->len) {
@@ -108,6 +115,46 @@ StringViewList p_tokenize(const StringView* sv) {
             // && sv->start[i] != '='
             i++;
         }
+        SVL_p_push(&ot, SV_lrslice_from_SV(sv, start, i - start));
+    }
+    return ot;
+}*/
+
+StringViewList p_tokenize(const StringView* sv) {
+    StringViewList ot = SVL_new();
+    size_t i = 0;
+    while (i < sv->len) {
+        if (sv->start[i] == ' ' || sv->start[i] == '\n' || sv->start[i] == '\t') {
+            i++;
+            continue;
+        }
+        if (is_operator(sv->start[i]) || sv->start[i] == '(' ||
+            sv->start[i] == ')' || sv->start[i] == ';' || sv->start[i] == ',' ||
+            sv->start[i] == ':') {
+            SVL_p_push(&ot, SV_lrslice_from_SV(sv, i, 1));
+            i++;
+            continue;
+            }
+        if (sv->start[i] == '"') {
+            size_t start = i;
+            i++;
+            while (i < sv->len && sv->start[i] != '"') {
+                if (sv->start[i] == '\\') i++;
+                i++;
+            }
+            i++;
+            SVL_p_push(&ot, SV_lrslice_from_SV(sv, start, i - start));
+            continue;
+        }
+        size_t start = i;
+        while (i < sv->len &&
+               sv->start[i] != ' ' && sv->start[i] != '\t' && sv->start[i] != '\n' &&
+               !is_operator(sv->start[i]) &&
+               sv->start[i] != '(' && sv->start[i] != ')' &&
+               sv->start[i] != ';' && sv->start[i] != ':' && sv->start[i] != ',' &&
+               sv->start[i] != '"') {
+            i++;
+               }
         SVL_p_push(&ot, SV_lrslice_from_SV(sv, start, i - start));
     }
     return ot;
@@ -586,7 +633,7 @@ void get_function_call_stmt(StringViewListView* view) {
         StringView semi_or_into = SVLV_inspect_back(view);
         if (SV__pv_cmp_eq(&semi_or_into, ";", 1)) {
             get_semicolon(view);
-            printf("[warning] discarding return value of function <>\n");
+            printf("[warning] discarding return value of function <%.*s>\n", (int)f.name.len, f.name.start);
         } else if (SV__pv_cmp_eq(&semi_or_into, "into", 4)) {
             SVLV_consume_one(view); // into
             StringView into_var = SVLV_consume_one(view);
@@ -700,7 +747,7 @@ void get_function(StringViewListView* view) {
 
     for (size_t i = 0; i < f_args.len; i++) {
         int slot = declare_var(f_args.array[i]);  // same as local var
-        printf("in function <%.*s>, param '%.*s'\n", (int)f_name.len, f_name.start, (int)f_args.array[i].len, f_args.array[i].start);
+        // printf("in function <%.*s>, param '%.*s'\n", (int)f_name.len, f_name.start, (int)f_args.array[i].len, f_args.array[i].start);
 
         // MOV [rbp - slot], rdi/rsi/...
         // BS_write(&code_output, param_store_rex[i]); // no rex.w, just 32-bit
@@ -708,6 +755,9 @@ void get_function(StringViewListView* view) {
         BS_write(&code_output, param_store_modrm[i]);
         BS_write(&code_output, (uint8_t)(-slot));
     }
+
+
+    SVL_p_free(&f_args);
 
 
     get_stmt_block(view, returns_value);
@@ -740,7 +790,7 @@ void get_function(StringViewListView* view) {
 
     size_t f_end_cursor = BS_get_cursor(&code_output);
 
-    printf("f_start_cursor = %lu\n", f_start_cursor);
+    // printf("f_start_cursor = %lu\n", f_start_cursor);
 
     FR_overwrite_function(&functions_registry, (Function) {
         .name = f_name,
@@ -777,17 +827,106 @@ void create_frame(void) {
 
 void resolve_frame(void) {
     resolve_relocations(&code_output, &relocations, &labels);
-
+    free(var_table);
     LL_free(&labels);
     RL_free(&relocations);
 }
 
-void process(const StringView* input) {
+bool is_include_next(StringViewListView* list) {
+    if (SVLV_is_empty(list)) return false;
+
+    StringView sv = SVLV_inspect_back(list);
+    if (SV__pv_cmp_eq(&sv, "include", 7)) return true;
+    return false;
+}
+
+bool is_quoted_string(StringView* sv) {
+    return sv->len >= 2 && sv->start[0] == '"' && sv->start[sv->len-1] == '"';
+}
+
+void compile(StringViewListView*, StringView* current_source_file);
+
+void resolve_import(StringViewListView* list, StringView* current_source_file) {
+    SVLV_consume_one(list); // include KW
+    StringView path = SVLV_consume_one(list);
+    if (!is_quoted_string(&path)) {
+        fprintf(stderr, "[ERROR] include excepted quoted string, but got '%.*s'\n", (int)path.len, path.start);
+        exit(1);
+    }
+
+    get_semicolon(list);
+
+    StringView path2 = path;
+    path2.start++;
+    path2.len -= 2;
+
+    const char* path_c = SV_to__c_string(&path2);
+    const char* source_path_c = SV_to__c_string(current_source_file);
+
+    // char resolved_path_raw[PATH_MAX];
+    // if (realpath(path_c, resolved_path_raw) == NULL) {
+    //     perror("realpath");
+    //     exit(1);
+    // }
+    // StringView resolved_path = SV_from_string(resolved_path_raw);
+    char resolved_path_raw[PATH_MAX];
+
+    resolve_import_path(source_path_c, path_c, resolved_path_raw);
+
+    StringView resolved_path = SV_from_string(resolved_path_raw);
+
+    for (size_t n=0; n < import_table.len; n++) {
+        if (SV__pp_cmp_eq(&import_table.array[n], &resolved_path)) {
+            return;
+        }
+    }
+
+    SVL_p_push(&import_table, resolved_path);
+
+    size_t file_size;
+    char* content_raw = read_file(resolved_path_raw, &file_size);
+    StringView content = SV_from_string_len(content_raw, file_size);
+
+    StringViewList svl = p_tokenize(&content);
+    StringViewListView svlv = SVLV_from_SVL(&svl);
+
+    free((void*)path_c);
+    free((void*)source_path_c);
+
+    compile(&svlv, &resolved_path);
+
+    SVL_p_free(&svl);
+
+    if (content_ptrs_len + 1 > content_ptrs_cap) {
+        content_ptrs_cap *= 2;
+        char** new_array = realloc(content_ptrs, content_ptrs_cap * sizeof(char*));
+        assert(new_array != NULL);
+        content_ptrs = new_array;
+    }
+    content_ptrs[content_ptrs_len++] = content_raw;
+}
+
+void compile(StringViewListView* list, StringView* current_source_file) {
+    while (is_include_next(list)) {
+        resolve_import(list, current_source_file);
+    }
+    while(list->len > 0) {
+        get_function(list);
+    }
+}
+
+void process(const StringView* input, StringView* current_source_file) {
     code_output = BS_new();
     assert(code_output.array != NULL);
 
     functions_registry = FR_new();
     function_patch_list = FCPL_new();
+
+    import_table = SVL_new();
+
+    SVL_p_push(&import_table, *current_source_file);
+
+    content_ptrs = malloc(sizeof(char*) * content_ptrs_cap);
 
     // printf("input: '");
     // SV_p_printf(input);
@@ -806,7 +945,6 @@ void process(const StringView* input) {
         else
             printf("']\n");
     }*/
-
 
     StringViewListView svlv = SVLV_from_SVL(&svl);
 
@@ -835,9 +973,8 @@ void process(const StringView* input) {
     //     SVL_p_free(&svl);
     //     exit(1);
     // }
-    while(svlv.len > 0) {
-        get_function(&svlv);
-    }
+
+    compile(&svlv, current_source_file);
 
     SVL_p_free(&svl);
 
@@ -863,10 +1000,27 @@ void process(const StringView* input) {
     const uint64_t load_addr = 0x400000;
 
     resolve_function_calls(data, load_addr, &functions_registry, &function_patch_list);
-    write_elf64("out", data, byte_size, load_addr);
+    FunctionsRegistry new_fr = FR_new();
+    FR_register_function(&new_fr, (Function) {
+        .name = SV_from_string_len("_start", 6),
+        .offset = 0,
+        .code_size = sizeof(entry_point),
+        .returns_value = false,
+        .arg_count = 0,
+    });
+    for (size_t n=0; n<functions_registry.len; n++) {
+        FR_register_function(&new_fr, functions_registry.array[n]);
+    }
+    write_elf64("out", data, byte_size, load_addr, &new_fr);
 
     BS_free(&code_output);
     free(data);
     FR_free(&functions_registry);
+    FR_free(&new_fr);
     FCPL_free(&function_patch_list);
+    SVL_p_free(&import_table);
+    for (size_t n=0; n< content_ptrs_len; n++) {
+        free(content_ptrs[n]);
+    }
+    free(content_ptrs);
 }
