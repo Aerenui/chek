@@ -11,31 +11,39 @@ StringViewList SVL_from_args(int, char*[]);
 int main(int argc, char* argv[]) {
     StringViewList args = SVL_from_args(argc, argv);
 
-    if (args.len != 2) {
+    const char* output_name = "out"; // default
+    StringView input_src_path = {0};
+
+    // Parse arguments manually
+    size_t i = 1;
+    while (i < args.len) {
+        StringView arg = args.array[i];
+        if (SV__pv_cmp_eq(&arg, "-o", 2)) {
+            if (i + 1 >= args.len) {
+                fprintf(stderr, "[ERROR] -o requires an argument\n");
+                SVL_p_free(&args);
+                return 1;
+            }
+            output_name = args.array[i + 1].start;
+            i += 2;
+        } else {
+            input_src_path = arg;
+            i++;
+        }
+    }
+
+    if (input_src_path.start == NULL) {
         fprintf(stderr, "[ERROR] expected one argument\n");
-        printf("[USAGE] %.*s <src>\n", (int) args.array[0].len, args.array[0].start);
+        printf("[USAGE] %.*s [-o <out>] <src>\n",
+               (int)args.array[0].len, args.array[0].start);
+        SVL_p_free(&args);
         return 1;
     }
 
-    // printf("args: ");
-    // for (size_t args_iter = 0; args_iter < args.len; args_iter++) {
-    //     printf("'");
-    //     SV_p_printf(&args.array[args_iter]);
-    //     if (args_iter + 1 != args.len)
-    //         printf("', ");
-    //     else
-    //         putc('\'', stdout);
-    // }
-    // putc('\n', stdout);
-
-    StringView input_src_path = args.array[1];
-
     size_t file_size;
-    // printf("reading input file '%.*s'\n", (int)input_src_path.len, input_src_path.start);
     char* content = read_file(input_src_path.start, &file_size);
+
     StringView src_contents = SV_from_string_len(content, file_size);
-
-
 
 
     char resolved_path_raw[PATH_MAX];
@@ -48,19 +56,7 @@ int main(int argc, char* argv[]) {
 
     StringView full_path = SV_from_string(resolved_path_raw);
 
-    /*const StringView sv = SV_from_string("int a: 5 * 3 + 10 + 1 ;\n" \
-        "int b: a+5*(1+3);\n" \
-        "int c: a = 2;\n" \
-        "if c then\n" \
-        "  set a: a+1;\n" \
-        "end\n" \
-        "int d: 5;\n" \
-        "print a 10;"
-        );*/
-    // const StringView sv = SV_from_string("int a: 5 * 3 + 10 + 1; if 1 < 2 then set a: a + 5; else set a: a - 5; end int c: 10;");
-    // const StringView sv = SV_from_string("");
-
-    process(&src_contents, &full_path);
+    process(&src_contents, &full_path, output_name);
 
     free(content);
 

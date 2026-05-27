@@ -9,6 +9,8 @@ extern size_t tmp_cnt;
 extern size_t label_cnt;
 extern ByteSeg code_output;
 
+void process(const StringView*, StringView*, const char*);
+
 typedef struct {
     StringView name;
     int offset; // rbp - offset
@@ -23,7 +25,7 @@ int alloc_tmp_stack_slot(StackFrame*);
 StackFrame* get_frame(void);
 int get_stack_frame_max(StackFrame*);
 
-void process(const StringView*, StringView*);
+
 void create_frame(void);
 void resolve_frame(void);
 

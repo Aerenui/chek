@@ -802,7 +802,7 @@ void get_function(StringViewListView* view) {
 
 
     resolve_frame();
-    printf("[INFO] compiled function '%.*s'\n", (int)f_name.len, f_name.start);
+    // printf("[INFO] compiled function '%.*s'\n", (int)f_name.len, f_name.start);
 }
 
 
@@ -915,7 +915,7 @@ void compile(StringViewListView* list, StringView* current_source_file) {
     }
 }
 
-void process(const StringView* input, StringView* current_source_file) {
+void process(const StringView* input, StringView* current_source_file, const char* output_filepath) {
     code_output = BS_new();
     assert(code_output.array != NULL);
 
@@ -999,6 +999,20 @@ void process(const StringView* input, StringView* current_source_file) {
 
     const uint64_t load_addr = 0x400000;
 
+    if (!FR_has_function(&functions_registry, SV_from_string_len("main", 4))) {
+        fprintf(stderr, "[ERROR] no main function found in the program\n");
+        exit(1);
+    }
+    Function main_fn = FR_lookup_function(&functions_registry, SV_from_string_len("main", 4));
+    if (main_fn.arg_count != 0) {
+        fprintf(stderr, "[ERROR] main function should have not arguments, but %i were provided\n", main_fn.arg_count);
+        exit(1);
+    }
+    if (main_fn.returns_value == false) {
+        fprintf(stderr, "[ERROR] main function should return int, but specified in the program as 'void'\n");
+        exit(1);
+    }
+
     resolve_function_calls(data, load_addr, &functions_registry, &function_patch_list);
     FunctionsRegistry new_fr = FR_new();
     FR_register_function(&new_fr, (Function) {
@@ -1011,7 +1025,7 @@ void process(const StringView* input, StringView* current_source_file) {
     for (size_t n=0; n<functions_registry.len; n++) {
         FR_register_function(&new_fr, functions_registry.array[n]);
     }
-    write_elf64("out", data, byte_size, load_addr, &new_fr);
+    write_elf64(output_filepath, data, byte_size, load_addr, &new_fr);
 
     BS_free(&code_output);
     free(data);
