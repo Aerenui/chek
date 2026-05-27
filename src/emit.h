@@ -152,6 +152,7 @@ typedef struct {
 FunctionsRegistry FR_new(void);
 void FR_free(FunctionsRegistry*);
 void FR_register_function(FunctionsRegistry*, Function);
+void FR_overwrite_function(FunctionsRegistry*, Function);
 bool FR_has_function(FunctionsRegistry*, StringView);
 Function FR_lookup_function(FunctionsRegistry*, StringView);
 

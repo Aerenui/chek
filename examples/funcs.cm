@@ -15,11 +15,19 @@ void print_4(a,b,c,d)
     print d 32;
 end
 
+int add(var_a, var_b)
+    return var_a + var_b;
+end
+
 void main()
     int a: 1;
     print 64 10;
     call abc();
     call print_4(64, 32+32, 90+7, 100);
+    print 10;
+    int c: 0;
+    call add(90, 7) into c;
+    print c;
     print 10;
 end
 

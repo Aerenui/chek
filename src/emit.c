@@ -294,6 +294,17 @@ void FR_register_function(FunctionsRegistry* fr, Function f) {
     fr->array[fr->len++] = f;
 }
 
+void FR_overwrite_function(FunctionsRegistry* fr, Function f) {
+    for (size_t n = 0; n < fr->len; n++) {
+        if (SV__pp_cmp_eq(&fr->array[n].name, &f.name)) {
+            fr->array[n] = f;
+            return;
+        }
+    }
+    fprintf(stderr, "[ERROR] <internal> function not found in registry\n");
+    exit(1);
+}
+
 bool FR_has_function(FunctionsRegistry* fr, StringView name) {
     for (size_t n = 0; n < fr->len; n++) {
         if (SV__pp_cmp_eq(&fr->array[n].name, &name)) {

@@ -23,14 +23,14 @@ bool is_alpha(char c) {
 int precedence(char op) {
     if (op == '<' || op == '>' || op == '=') return 0;
     if (op == '+' || op == '-') return 1;
-    if (op == '*' || op == '/') return 2;
+    if (op == '*' || op == '/' || op == '%') return 2;
 
     fprintf(stderr, "[ERROR] <intern> precedence ( '%c' ) {%i}\n", op, op);
     exit(1);
 }
 
 bool is_operator(char c) {
-    return c == '+' || c == '-' || c == '*' || c == '/' || c == '<' || c == '>' || c == '=';
+    return c == '+' || c == '-' || c == '*' || c == '/' || c == '<' || c == '>' || c == '=' || c == '%';
 }
 
 char* format_operator(char c) {
@@ -279,6 +279,35 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view) {
                     }
                 }
                 BS_write(&code_output, 0xC1);            // ModRM: eax, ecx
+            } else if (sv.start[0] == '/' || sv.start[0] == '%') {
+                // idiv cannot take an immediate — spill s2 to stack if needed
+                int s2_slot;
+                if (s2.kind == LOC_IMMEDIATE) {
+                    s2_slot = alloc_tmp_stack_slot(get_frame());
+                    BS_write(&code_output, 0xC7);
+                    BS_write(&code_output, 0x45);
+                    BS_write(&code_output, (uint8_t)(-s2_slot));
+                    BS_write(&code_output, (s2.value >>  0) & 0xFF);
+                    BS_write(&code_output, (s2.value >>  8) & 0xFF);
+                    BS_write(&code_output, (s2.value >> 16) & 0xFF);
+                    BS_write(&code_output, (s2.value >> 24) & 0xFF);
+                } else {
+                    s2_slot = (s2.kind == LOC_VAR) ? lookup_var(s2.var) : s2.offset;
+                }
+
+                // cdq — sign-extend eax into edx:eax
+                BS_write(&code_output, 0x99);
+
+                // idiv dword ptr [rbp - s2_slot]
+                BS_write(&code_output, 0xF7);
+                BS_write(&code_output, 0x7D);
+                BS_write(&code_output, (uint8_t)(-s2_slot));
+
+                // for '%', result is in edx — move it to eax
+                if (sv.start[0] == '%') {
+                    BS_write(&code_output, 0x89);  // mov eax, edx
+                    BS_write(&code_output, 0xD0);
+                }
             }
 
 

@@ -537,8 +537,6 @@ void get_function_call_stmt(StringViewListView* view) {
         exit(1);
     }
 
-    get_semicolon(view);
-
     // rdi, rsi, rdx, rcx, r8, r9
     static const uint8_t arg_regs_modrm[] = { 0x7D, 0x75, 0x55, 0x4D, 0x00, 0x00 };
     // REX.W prefix needed for r8/r9 (extended registers)
@@ -582,6 +580,32 @@ void get_function_call_stmt(StringViewListView* view) {
         .relative = true,
         .bit_size = 4,
     });
+
+
+    if (f.returns_value) {
+        StringView semi_or_into = SVLV_inspect_back(view);
+        if (SV__pv_cmp_eq(&semi_or_into, ";", 1)) {
+            get_semicolon(view);
+            printf("[warning] discarding return value of function <>\n");
+        } else if (SV__pv_cmp_eq(&semi_or_into, "into", 4)) {
+            SVLV_consume_one(view); // into
+            StringView into_var = SVLV_consume_one(view);
+            int slot = lookup_var(into_var);
+            // MOV [rbp - slot], eax
+            BS_write(&code_output, 0x89);
+            BS_write(&code_output, 0x45);
+            BS_write(&code_output, (uint8_t) (-slot));
+
+            get_semicolon(view);
+        } else {
+            fprintf(stderr, "[ERROR] expected either ';' or 'into' after function call, got '%.*s'\n", (int)semi_or_into.len ,semi_or_into.start);
+            exit(1);
+        }
+    } else {
+        get_semicolon(view);
+    }
+
+
 }
 
 void get_stmt(StringViewListView* view, bool should_return_value) {
@@ -648,6 +672,17 @@ void get_function(StringViewListView* view) {
             exit(1);
         }
     }
+
+    // temp write
+    FR_register_function(&functions_registry, (Function) {
+        .name = f_name,
+        .arg_count = f_args.len,
+        .offset = f_start_cursor,
+        .code_size = 0,
+        .returns_value = returns_value
+    });
+
+
     // todo: emit stack preparation for frame
     uint8_t prologue[] = {
         0x55,                               // push rbp
@@ -706,7 +741,8 @@ void get_function(StringViewListView* view) {
     size_t f_end_cursor = BS_get_cursor(&code_output);
 
     printf("f_start_cursor = %lu\n", f_start_cursor);
-    FR_register_function(&functions_registry, (Function) {
+
+    FR_overwrite_function(&functions_registry, (Function) {
         .name = f_name,
         .arg_count = f_args.len,
         .offset = f_start_cursor,
