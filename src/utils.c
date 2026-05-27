@@ -5,6 +5,44 @@
 #include <string.h>
 #include <stdio.h>
 
+char *read_file(const char *path, size_t *out_len) {
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        perror(path);
+        exit(1);
+    }
+
+    if (fseek(f, 0, SEEK_END) != 0) {
+        perror("fseek");
+        exit(1);
+    }
+
+    long len = ftell(f);
+    if (len < 0) {
+        perror("ftell");
+        exit(1);
+    }
+    rewind(f);
+
+    char *buf = malloc(len + 1);
+    if (!buf) {
+        perror("malloc");
+        exit(1);
+    }
+
+    size_t read = fread(buf, 1, len, f);
+    if ((long)read != len) {
+        fprintf(stderr, "%s: read %zu of %ld bytes\n", path, read, len);
+        free(buf);
+        exit(1);
+    }
+
+    fclose(f);
+    buf[len] = '\0';
+    if (out_len) *out_len = read;
+
+    return buf;
+}
 
 inline StringView SV_from_string(const char *s) {
     return (StringView){

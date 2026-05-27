@@ -1,0 +1,27 @@
+
+void abc()
+    int i: 97;
+    while i < 97 + 26 do
+        print i;
+        set i: i + 1;
+    end
+    print 10;
+end
+
+void print_4(a,b,c,d)
+    print a 32;
+    print b 32;
+    print c 32;
+    print d 32;
+end
+
+void main()
+    int a: 1;
+    print 64 10;
+    call abc();
+    call print_4(64, 32+32, 90+7, 100);
+    print 10;
+end
+
+
+

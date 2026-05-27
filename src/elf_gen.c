@@ -14,15 +14,15 @@
 #include "compiler.h"
 
 // load address for the executable segment
-#define LOAD_ADDR 0x400000
+// #define LOAD_ADDR 0x400000
 
 // congruence rule must hold — p_offset % p_align == p_vaddr % p_align
 #define PAGE_SIZE 0x1000
 #define CODE_OFFSET PAGE_SIZE  // pad headers into a full page
 
 
-void write_elf64(const char *path, uint8_t *code, size_t code_len) {
-    // --- prologue/epilogue ---
+void write_elf64(const char *path, const uint8_t *code, size_t code_len, uint64_t load_addr) {
+    /*// --- prologue/epilogue ---
     // push rbp; mov rbp, rsp; sub rsp, N  (N = frame.next_offset rounded to 16)
     uint8_t prologue[] = {
         0x55,                               // push rbp
@@ -39,11 +39,13 @@ void write_elf64(const char *path, uint8_t *code, size_t code_len) {
         0x48, 0x89, 0xC7,                           // mov rdi, rax  (exit code = 0)
         0x48, 0xC7, 0xC0, 0x3C, 0x00, 0x00, 0x00,   // mov rax, 60 (sys_exit)
         0x0F, 0x05                                  // syscall
-    };
+    };*/
 
-    size_t total_code = sizeof(prologue) + code_len + sizeof(epilogue);
+    // size_t total_code = sizeof(prologue) + code_len + sizeof(epilogue);
+    size_t total_code = code_len;
     // uint64_t entry = LOAD_ADDR + CODE_OFFSET;
-    uint64_t entry = LOAD_ADDR;
+    // uint64_t entry = LOAD_ADDR;
+    uint64_t entry = load_addr;
 
     Elf64_Ehdr ehdr = {
         .e_ident = {
@@ -70,8 +72,8 @@ void write_elf64(const char *path, uint8_t *code, size_t code_len) {
         .p_type   = PT_LOAD,
         .p_flags  = PF_R | PF_X,
         .p_offset = CODE_OFFSET,
-        .p_vaddr  = LOAD_ADDR,
-        .p_paddr  = LOAD_ADDR,
+        .p_vaddr  = load_addr, //LOAD_ADDR,
+        .p_paddr  = load_addr, //LOAD_ADDR,
         .p_filesz = total_code,
         .p_memsz  = total_code,
         .p_align = 0x1000,
@@ -83,9 +85,9 @@ void write_elf64(const char *path, uint8_t *code, size_t code_len) {
     fwrite(&ehdr,     1, sizeof(ehdr),     f);
     fwrite(&phdr,     1, sizeof(phdr),     f);
     fwrite(pad,       1, sizeof(pad),      f);
-    fwrite(prologue,  1, sizeof(prologue), f);
+
     fwrite(code,      1, code_len,         f);
-    fwrite(epilogue,  1, sizeof(epilogue), f);
+    // fwrite(epilogue,  1, sizeof(epilogue), f);
     fclose(f);
 
     chmod(path, 0755);

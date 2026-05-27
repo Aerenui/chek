@@ -1,0 +1,8 @@
+void main()
+    int a: 0;
+    while a < 26 do
+        print a+97;
+        set a: a + 1;
+    end
+    print 10;
+end

@@ -1,0 +1,8 @@
+int a: 0;
+int b: 1;
+while a < 100 do
+    print a 32;
+    int c: a;
+    set a: b;
+    set b: c + b;
+end

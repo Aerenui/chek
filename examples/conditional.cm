@@ -1,0 +1,7 @@
+int a: 97;
+if 1 < 2 then
+    set a: a + 2;
+else
+    set a: a - 1;
+end
+print a 10;

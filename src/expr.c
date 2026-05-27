@@ -48,7 +48,7 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view) {
     StringViewList operator_stack = SVL_new();
     bool expect_operator = false;
 
-    while (!SVLV_is_empty(view)) {
+    /*while (!SVLV_is_empty(view)) {
         StringView nw = SVLV_inspect_back(view);
         {
             // StringView inspect = SVLV_inspect_back(view);
@@ -103,6 +103,59 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view) {
             }
             SVL_p_push(&operator_stack, nw);
             expect_operator = false; // After an operator, we expect a value
+        }
+    }*/
+    int paren_depth = 0;
+
+    while (!SVLV_is_empty(view)) {
+        StringView nw = SVLV_inspect_back(view);
+        {
+            char fc = nw.start[0];
+            if (is_digit(fc) || is_operator(fc) || is_alpha(fc) || fc == '(' || fc == ')'); else {
+                break;
+            }
+            if (fc == ';') break;
+            if (fc == ')' && nw.len == 1 && paren_depth == 0) break;
+        }
+
+        if (expect_operator) {
+            if (is_digit(nw.start[0]) || is_alpha(nw.start[0]) || (nw.start[0] == '(' && nw.len == 1)) {
+                break;
+            }
+        } else {
+            if (is_operator(nw.start[0]) && nw.len == 1) {
+                break;
+            }
+        }
+
+        nw = SVLV_consume_one(view);
+
+        if (is_digit(nw.start[0]) || is_alpha(nw.start[0])) {
+            SVL_p_push(&ot, nw);
+            expect_operator = true;
+        } else if (nw.start[0] == '(' && nw.len == 1) {
+            paren_depth++;
+            SVL_p_push(&operator_stack, nw);
+            expect_operator = false;
+        } else if (nw.start[0] == ')' && nw.len == 1) {
+            paren_depth--;
+            while (operator_stack.len > 0 && SVL_p_inspect_back(&operator_stack)->start[0] != '(') {
+                StringView val = SVL_p_pop(&operator_stack);
+                SVL_p_push(&ot, val);
+            }
+            if (operator_stack.len > 0) {
+                SVL_p_pop(&operator_stack);
+            }
+            expect_operator = true;
+        } else if (is_operator(nw.start[0]) && nw.len == 1) {
+            char current_op = nw.start[0];
+            while (operator_stack.len > 0 && is_operator(SVL_p_inspect_back(&operator_stack)->start[0]) && precedence(
+                       SVL_p_inspect_back(&operator_stack)->start[0]) >= precedence(current_op)) {
+                StringView val = SVL_p_pop(&operator_stack);
+                SVL_p_push(&ot, val);
+                       }
+            SVL_p_push(&operator_stack, nw);
+            expect_operator = false;
         }
     }
 

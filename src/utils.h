@@ -7,6 +7,8 @@
 #include <stdlib.h>
 
 
+char* read_file(const char*, size_t*);
+
 typedef struct {
     const char* start;
     size_t len;

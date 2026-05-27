@@ -8,6 +8,7 @@
 
 typedef struct {
     int next_offset; // grows downward, starts at 4
+    int peek; // peek with temp vars.
 } StackFrame;
 
 typedef enum { LOC_IMMEDIATE, LOC_VAR, LOC_STACK_SLOT } LocKind;
@@ -64,7 +65,7 @@ typedef struct {
     StringView label; // points into source
     size_t offset; // byte offset in buffer where this label is defined
 } Label;*/
-typedef enum { REL_ELSE, REL_END } RelKind;
+typedef enum { REL_ELSE, REL_END, REL_LOOP } RelKind;
 
 typedef struct {
     size_t  patch_pos;
@@ -117,8 +118,52 @@ void emit_je_label(ByteSeg* buf, RelocationList* rels, StringView label);
 
 // -----------------------------------------------------------------------------------------
 
-// void define_label(ByteSeg*, LabelList*, StringView);
+typedef struct {
+    StringView name;
+    size_t offset;
+    size_t code_size;
+    bool returns_value;
+    uint8_t arg_count;
+} Function;
+
+typedef struct {
+    Function* array;
+    size_t len;
+    size_t cap;
+} FunctionsRegistry;
+#define FunctionsRegistry_default_cap 4
+
+
+typedef struct {
+    StringView name;
+    size_t offset;
+    bool relative;
+    uint8_t bit_size;
+} FunctionCallPatch;
+
+typedef struct {
+    FunctionCallPatch* array;
+    size_t len;
+    size_t cap;
+} FunctionCallPatchList;
+#define FunctionCallPatchList_default_cap 4
+
+
+FunctionsRegistry FR_new(void);
+void FR_free(FunctionsRegistry*);
+void FR_register_function(FunctionsRegistry*, Function);
+bool FR_has_function(FunctionsRegistry*, StringView);
+Function FR_lookup_function(FunctionsRegistry*, StringView);
+
+
+FunctionCallPatchList FCPL_new(void);
+void FCPL_free(FunctionCallPatchList*);
+void FCPL_register_pach(FunctionCallPatchList*, FunctionCallPatch);
+
+
+// -----------------------------------------------------------------------------------------
 
 void resolve_relocations(ByteSeg*, RelocationList*, LabelList*);
+void resolve_function_calls(uint8_t* array, size_t addr_offset, FunctionsRegistry*, FunctionCallPatchList*);
 
 #endif //SIMPLECOMPILERINC_2_EMIT_H

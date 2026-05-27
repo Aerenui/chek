@@ -16,10 +16,15 @@ typedef struct {
 
 int declare_var(StringView);
 int lookup_var(StringView);
+
 int alloc_stack_slot(StackFrame*);
+int alloc_tmp_stack_slot(StackFrame*);
 
 StackFrame* get_frame(void);
+int get_stack_frame_max(StackFrame*);
 
 void process(const StringView*);
+void create_frame(void);
+void resolve_frame(void);
 
 #endif //SIMPLECOMPILERINC_2_COMPILER_H

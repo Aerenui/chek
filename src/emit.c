@@ -262,3 +262,121 @@ void emit_je(ByteSeg *buf, RelocationList *rels, size_t id, RelKind kind) {
         .kind       = kind,
     });
 }
+
+// -----------------------------------------------------------------------------------------
+
+
+FunctionsRegistry FR_new(void) {
+    Function* array = malloc(sizeof(Function)*FunctionsRegistry_default_cap);
+    assert(array != NULL);
+    return (FunctionsRegistry) {
+        .array = array,
+        .cap = FunctionsRegistry_default_cap,
+        .len = 0
+    };
+}
+
+inline void FR_free(FunctionsRegistry* fr) {
+    free(fr->array);
+}
+
+void FR_register_function(FunctionsRegistry* fr, Function f) {
+    if (FR_has_function(fr, f.name)) {
+        fprintf(stderr, "[ERROR] inserting function when function with that name already exists, '%.*s'\n", (int)f.name.len, f.name.start);
+        exit(1);
+    }
+    if (fr->len + 1 > fr->cap) {
+        fr->cap *= 2;
+        Function* new_array = realloc(fr->array,sizeof(Function)*FunctionsRegistry_default_cap);
+        assert(new_array != NULL);
+        fr->array = new_array;
+    }
+    fr->array[fr->len++] = f;
+}
+
+bool FR_has_function(FunctionsRegistry* fr, StringView name) {
+    for (size_t n = 0; n < fr->len; n++) {
+        if (SV__pp_cmp_eq(&fr->array[n].name, &name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+Function FR_lookup_function(FunctionsRegistry* fr, StringView name) {
+    for (size_t n = 0; n < fr->len; n++) {
+        if (SV__pp_cmp_eq(&fr->array[n].name, &name)) {
+            return fr->array[n];
+        }
+    }
+    fprintf(stderr, "[ERROR] <internal> function not found in registry\n");
+    exit(1);
+}
+
+// -----------------------------------------------------------------------------------------
+
+
+FunctionCallPatchList FCPL_new(void) {
+    FunctionCallPatch* array = malloc(sizeof(FunctionCallPatch)*FunctionCallPatchList_default_cap);
+    assert(array != NULL);
+    return (FunctionCallPatchList) {
+        .array = array,
+        .len = 0,
+        .cap = FunctionCallPatchList_default_cap,
+    };
+}
+
+inline void FCPL_free(FunctionCallPatchList* fclp) {
+    free(fclp->array);
+}
+
+void FCPL_register_pach(FunctionCallPatchList* fl, FunctionCallPatch fp) {
+    if (fl->len + 1 > fl->cap) {
+        fl->cap *= 2;
+        FunctionCallPatch* new_array = realloc(fl->array, sizeof(FunctionCallPatch) * fl->cap);
+        assert(new_array != NULL);
+        fl->array = new_array;
+    }
+
+    fl->array[fl->len++] = fp;
+}
+
+
+// -----------------------------------------------------------------------------------------
+
+void resolve_function_calls(uint8_t* array, size_t addr_offset, FunctionsRegistry* fr, FunctionCallPatchList* patches) {
+    for (size_t i = 0; i < patches->len; i++) {
+        FunctionCallPatch* patch = &patches->array[i];
+
+        if (!FR_has_function(fr, patch->name)) {
+            fprintf(stderr, "[ERROR] unknown function '%.*s'\n", (int)patch->name.len, patch->name.start);
+            exit(1);
+        }
+
+        Function f = FR_lookup_function(fr, patch->name);
+        size_t target = f.offset;
+        // size_t* target = FR_lookup(fr, patch->name);
+        // if (target == NULL) {
+        //     fprintf(stderr, "resolve_function_calls: unresolved symbol '%.*s'\n",
+        //             (int)patch->name.len, patch->name.ptr);
+        //     continue;
+        // }
+
+        size_t patch_site_addr = addr_offset + patch->offset;
+        uint64_t value;
+        printf("<%.*s> patch->offset=%lu, target=%lu = 0x%x\n", (int)patch->name.len, patch->name.start, patch->offset, target, (uint8_t)target);
+
+        if (patch->relative) {
+            // value = (uint64_t)(target - (patch_site_addr + patch->bit_size));
+            // value = (uint64_t)target;
+            // value = (uint64_t)((addr_offset + target) - (patch->offset + patch->bit_size));
+            value = (uint64_t)(target - (patch->offset + patch->bit_size));
+        } else {
+            fprintf(stderr, "unimplement ndauw nda\n");
+            exit(1);
+            // value = (uint64_t)target;
+        }
+
+        memcpy(array + patch->offset, &value, patch->bit_size);
+    }
+}
