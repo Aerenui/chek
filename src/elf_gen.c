@@ -21,7 +21,12 @@
 #define CODE_OFFSET PAGE_SIZE  // pad headers into a full page
 
 
-void write_elf64(const char *path, const uint8_t *code, size_t code_len, uint64_t load_addr, FunctionsRegistry* fr) {
+void write_elf64(
+    const char *path,
+    const uint8_t *code, size_t code_len, uint64_t load_addr,
+    FunctionsRegistry* fr,
+    uint64_t str_consts_load_addr, StringViewList* string_consts
+    ) {
     /*// --- prologue/epilogue ---
     // push rbp; mov rbp, rsp; sub rsp, N  (N = frame.next_offset rounded to 16)
     uint8_t prologue[] = {
@@ -47,8 +52,8 @@ void write_elf64(const char *path, const uint8_t *code, size_t code_len, uint64_
     // uint64_t entry = LOAD_ADDR;
     uint64_t entry = load_addr;
 
-    char shstrtab[] = "\0.text\0.strtab\0.symtab\0.shstrtab";
-    Elf64_Shdr shdrs[5] = {0};
+    char shstrtab[] = "\0.text\0.strtab\0.symtab\0.shstrtab\0.rodata\0";
+    Elf64_Shdr shdrs[6] = {0};
 
     // [0] null
     shdrs[0] = (Elf64_Shdr){0};
@@ -127,8 +132,12 @@ void write_elf64(const char *path, const uint8_t *code, size_t code_len, uint64_
         .sh_size      = sizeof(shstrtab),
     };
 
-    uint64_t section_headers_file_offset = 1 + shstrtab_file_offset;
+
+
+    uint64_t section_headers_file_offset = 1 + shstrtab_file_offset + sizeof(shstrtab);
     // section_headers_file_offset += section_headers_file_offset % PAGE_SIZE; // to full page
+
+    #define phnum 2
 
     Elf64_Ehdr ehdr = {
         .e_ident = {
@@ -145,13 +154,48 @@ void write_elf64(const char *path, const uint8_t *code, size_t code_len, uint64_
         .e_flags     = 0,
         .e_ehsize    = sizeof(Elf64_Ehdr),
         .e_phentsize = sizeof(Elf64_Phdr),
-        .e_phnum     = 1,
+        .e_phnum     = phnum,
         .e_shentsize = sizeof(Elf64_Shdr),
-        .e_shnum     = 5,
+        .e_shnum     = 6,
         .e_shstrndx  = 4, // SHN_UNDEF,
     };
 
-    Elf64_Phdr phdr = {
+    Elf64_Phdr phdr_lst[phnum] = {0};
+
+    // uint64_t string_consts_file_offset = 1+section_headers_file_offset;
+    // string_consts_file_offset += string_consts_file_offset % PAGE_SIZE;
+    uint64_t string_consts_file_offset = (section_headers_file_offset + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+
+
+
+
+
+
+    size_t string_consts_size = 1;
+    for (size_t n=0; n < string_consts->len; n++) {
+        string_consts_size += string_consts->array[n].len + 1; // +1 for NULL
+    }
+
+    // [5] .rodata
+    shdrs[5] = (Elf64_Shdr){
+        .sh_name      = 33, // offset of ".rodata" in shstrtab
+        .sh_type      = SHT_PROGBITS,
+        .sh_flags =     SHF_ALLOC,
+        .sh_offset    = string_consts_file_offset,
+        .sh_size      = string_consts_size,
+        .sh_addr = str_consts_load_addr,
+        .sh_addralign = PAGE_SIZE,
+    };
+
+    uint64_t string_consts_size2 = 1;
+    uint8_t* string_consts_array = calloc(1, string_consts_size);
+    for (size_t n=0; n < string_consts->len; n++) {
+        memcpy(string_consts_array+string_consts_size2, string_consts->array[n].start, string_consts->array[n].len);
+        string_consts_size2 += string_consts->array[n].len + 1; // +1 for NULL
+    }
+
+    // LOAD .text
+    phdr_lst[0] = (Elf64_Phdr) {
         .p_type   = PT_LOAD,
         .p_flags  = PF_R | PF_X,
         .p_offset = CODE_OFFSET,
@@ -162,11 +206,25 @@ void write_elf64(const char *path, const uint8_t *code, size_t code_len, uint64_
         .p_align = 0x1000,
     };
 
-    uint8_t pad[PAGE_SIZE - sizeof(Elf64_Ehdr) - sizeof(Elf64_Phdr)] = {0};
+    // LOAD .rodata
+    phdr_lst[1] = (Elf64_Phdr) {
+        .p_type   = PT_LOAD,
+        .p_flags  = PF_R,
+        .p_offset = string_consts_file_offset,
+        .p_vaddr  = str_consts_load_addr, //LOAD_ADDR,
+        .p_paddr  = str_consts_load_addr, //LOAD_ADDR,
+        .p_filesz = string_consts_size,
+        .p_memsz  = string_consts_size,
+        .p_align = 0x1000,
+    };
+
+
+
+    uint8_t pad[PAGE_SIZE - sizeof(Elf64_Ehdr) - (phnum*sizeof(Elf64_Phdr))] = {0};
 
     FILE *f = fopen(path, "wb");
     fwrite(&ehdr,     1, sizeof(ehdr),     f);
-    fwrite(&phdr,     1, sizeof(phdr),     f);
+    fwrite(&phdr_lst,     1, phnum*sizeof(Elf64_Phdr),     f);
     fwrite(pad,       1, sizeof(pad),      f);
     fwrite(code,      1, code_len,         f);
 
@@ -175,7 +233,7 @@ void write_elf64(const char *path, const uint8_t *code, size_t code_len, uint64_
     fwrite(full_pad, 1, full_pad_size, f);
     free(full_pad);
 
-    // [ ELF header ][ program headers ][ .text ][ .strtab ][ .symtab ][ .shstrtab ][ section headers ]
+    // [ ELF header ][ program headers ][ .text ][ .strtab ][ .symtab ][ .shstrtab ][ section headers ][ .rodata ]
 
     fseek(f, strtab_file_offset, SEEK_SET);;
     fwrite(strtab, 1, strtab_len, f);
@@ -185,20 +243,17 @@ void write_elf64(const char *path, const uint8_t *code, size_t code_len, uint64_
     fwrite(symtab, 1, symtab_size, f);
     free(symtab);
 
-    fseek(f, shstrtab_file_offset, SEEK_SET);;
+    fseek(f, shstrtab_file_offset, SEEK_SET);
     fwrite(shstrtab, 1, sizeof(shstrtab), f);
 
     fseek(f, section_headers_file_offset, SEEK_SET);;
     fwrite(shdrs, 1, sizeof(shdrs), f);
 
+    fseek(f, string_consts_file_offset, SEEK_SET);
+    fwrite(string_consts_array, 1, string_consts_size, f);
 
     fclose(f);
 
     chmod(path, 0755);
 
-    // fprintf(stderr, "shstrtab_file_offset: 0x%lx\n", shstrtab_file_offset);
-    // fprintf(stderr, "symtab_file_offset:   0x%lx\n", symtab_file_offset);
-    // fprintf(stderr, "symtab_size:          0x%lx\n", symtab_size);
-    // fprintf(stderr, "shdr_offset:          0x%lx\n", section_headers_file_offset);
-    // fprintf(stderr, "sizeof(shstrtab):     0x%lx\n", sizeof(shstrtab));
 }

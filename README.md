@@ -2,7 +2,7 @@
 
 Simple zero-copy single pass full compiler written in C, currently supporting only elf-x86_64 target.
 
-Supports only one data type `int` which is 32-bit signed integer.
+Supports only one data type `int` which is 32-bit signed integer. There are **no** string or char literals for now.
 
 ## syntax
 
@@ -14,6 +14,9 @@ end
 ```
 
 ### creating variable
+Variables are scoped in `if` and `while`. 
+Variables can be declared only inside functions and are per-function valid. 
+Every variable is mutable.
 > int <name>: <expr>;
 ```
 int a: 5*(1+var_b);
@@ -25,16 +28,44 @@ int a: 5*(1+var_b);
 set a: a * 2 + b;
 ```
 
+### variable shadowing
+Variables declared inside `if` or `while` overshadow variables declared in outer scope.
+```
+int var: 5;
+call print_int(var); print 10; # prints 5
+if 1 then
+    int var: 10;
+    call print_int(var); print 10; # prints 10
+end
+call print_int(var); print 10; # prints 5
+```
+
 ### expressions
-Rules of associativity apply here as follows: `*`, `/`, `%`, then `+`, '-', then `<`, `>`, `=`.
+Rules of associativity apply here as follows: `*`, `/`, `%`, then `+`, '-', then `<`, `>`, `=`, `!`, then `|`, `&`.
+Be aware the `!` means *not equal*.
 > math operators: `+` `-` `*` `/` `%`
-> comparison operators: `<` `>` `=`
+> comparison operators: `<` `>` `=`, `!`
+> logical operator: `|` for `or` and `&` for `and`
+```
+int a: 1 ! 2; # 1 is not eq 2 -> TRUE(1)
+int b: 1 < 2 & 2 < 1; # 1 is less than 2 AND 2 is less than 1 -> FALSE, second condition does not hold
+
+int val: 5;
+int val2: (val * 3) / (val + 1); # = 2 (integer division)
+```
+
+### comments
+Comment starts with `#` and ends with the end of line at which `#` occurred.
+```
+call print_int(123); # this is comment
+# and also this
+```
 
 ### print
 > print <expr> <expr> ...;
 ```
-print 10; // prints new line (\n in asci 10)
-print 97 98; // prints 'ab'
+print 10; # prints new line (\n in asci 10)
+print 97 98; # prints 'ab'
 ```
 
 ### if conditional
@@ -64,20 +95,23 @@ print 10;
 
 ### function call
 When using `into` to capture returned value, variable needs to be declared beforehand.
+If used without `into` for a function that returns value, warning will be generated.
 > call <name>(<expr>, <expr>, ...) <? or into <var_name>>;
 ```
 call print_int(97+a);
 int b: 0;
-call add(2,3) into b; // writes result into variable 'b'
+call add(2,3) into b; # writes result into variable 'b'
 call greet();
 ```
 
 ### function definition
+Functions can have at most `6` arguments. More arguments are not supported. 
+Void functions do not need return statement at all, but can be used.
 > <int/void> <name>(<arg_name>, <arg_name>, ...) <stmts> end
 ```
 void greet()
     print 97 98 99 10;
-    return; // in case of void function return statements are optional
+    return; # in case of void function return statements are optional
 end
 
 int add(a, b)
@@ -101,7 +135,8 @@ end
 ```
 
 ### imports
-Include copies over the contents and compiles it before the contents of importer.
+Include copies over the contents and compiles it before the contents of importer. 
+When the path is relative, it is resolved from the point of the importer's location. 
 > include "<path>";
 ```
 include "libs/print_int.cm";

@@ -1,0 +1,19 @@
+include "libs/print_int.cm";
+
+int main()
+
+    int a: 1*(3+4);
+    call print_int(a); print 32; # 7
+
+    set a: 1 + 2 = 3;
+    call print_int(a); print 32; # 1 = TRUE
+
+    set a: 1 + 2 ! 3;
+    call print_int(a); print 32; # 0 = FALSE
+
+    set a: 1 + 2 > 5 | 2 * 3 + 1 ! 5;
+    call print_int(a); print 32; # 1 = TRUE
+
+    print 10;
+    return 0;
+end

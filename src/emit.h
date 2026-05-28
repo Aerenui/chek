@@ -161,6 +161,26 @@ FunctionCallPatchList FCPL_new(void);
 void FCPL_free(FunctionCallPatchList*);
 void FCPL_register_pach(FunctionCallPatchList*, FunctionCallPatch);
 
+// -----------------------------------------------------------------------------------------
+
+typedef struct {
+    size_t const_index;
+    size_t patch_offset;
+    uint8_t bit_size;
+} StringConstAddrRelocation;
+
+typedef struct {
+    StringConstAddrRelocation* array;
+    size_t len;
+    size_t cap;
+} StringConstAddrRelocationList;
+#define StringConstAddrRelocationList_default_cap 4
+
+StringConstAddrRelocationList SCARL_new(void);
+void SCARL_push(StringConstAddrRelocationList*, StringConstAddrRelocation);
+void SCARL_free(StringConstAddrRelocationList*);
+
+void SCARL_resolve(StringConstAddrRelocationList*, uint8_t*, uint64_t, StringViewList*);
 
 // -----------------------------------------------------------------------------------------
 

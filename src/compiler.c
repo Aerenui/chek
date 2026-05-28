@@ -17,9 +17,11 @@ RelocationList relocations;
 LabelList labels;
 
 static FunctionsRegistry functions_registry;
-static FunctionCallPatchList function_patch_list;
+FunctionCallPatchList function_patch_list;
 
 static StringViewList import_table;
+static StringViewList string_consts;
+static StringConstAddrRelocationList string_consts_relocations;
 
 char* * content_ptrs;
 size_t content_ptrs_len = 0;
@@ -58,6 +60,12 @@ int get_stack_frame_max(StackFrame* f) {
     return f->next_offset;
 }
 
+/// returns offset
+size_t add_str_const(StringView sv) {
+    SVL_p_push(&string_consts, sv);
+    return string_consts.len-1;
+}
+
 static VarEntry* var_table;
 static size_t var_table_cap;
 static size_t var_table_length = 0;
@@ -65,7 +73,8 @@ static size_t var_table_length = 0;
 static size_t function_end_id;
 
 int lookup_var(StringView name) {
-    for (size_t i = 0; i < var_table_length; i++) {
+    // for (size_t i = 0; i < var_table_length; i++) {
+    for (size_t i = var_table_length; i-- > 0; ) { // reversed to find the most inner one
         if (SV__pp_cmp_eq(&var_table[i].name, &name))
             return var_table[i].offset;
     }
@@ -126,6 +135,10 @@ StringViewList p_tokenize(const StringView* sv) {
     while (i < sv->len) {
         if (sv->start[i] == ' ' || sv->start[i] == '\n' || sv->start[i] == '\t') {
             i++;
+            continue;
+        }
+        if (sv->start[i] == '#') {
+            while (i < sv->len && sv->start[i] != '\n') i++;
             continue;
         }
         if (is_operator(sv->start[i]) || sv->start[i] == '(' ||
@@ -361,7 +374,9 @@ void get_if_conditional(StringViewListView* view, bool should_return_value) {
         .kind       = REL_ELSE,
     });
 
-    // then-block
+    int frame_mext_offset_snapshot = get_frame()->next_offset;
+    size_t var_tale_length_snapshot = var_table_length;
+
     get_stmt_block(view, should_return_value);
 
     StringView else_keyword = SVLV_inspect_back(view);
@@ -398,6 +413,10 @@ void get_if_conditional(StringViewListView* view, bool should_return_value) {
         fprintf(stderr, "[ERROR] expected 'end' after if conditional, got '%.*s'\n", (int) end.len, end.start);
         exit(1);
     }
+
+
+    get_frame()->next_offset = frame_mext_offset_snapshot;
+    var_table_length = var_tale_length_snapshot;
 }
 
 void get_while_conditional(StringViewListView* view, bool should_return_value) {
@@ -530,6 +549,7 @@ void get_print_stmt(StringViewListView* view) {
     get_semicolon(view);
 }
 
+#define MAX_ARGS 6
 void get_function_call_stmt(StringViewListView* view) {
     StringView f_name = SVLV_consume_one(view);
     if (!FR_has_function(&functions_registry, f_name)) {
@@ -546,6 +566,10 @@ void get_function_call_stmt(StringViewListView* view) {
 
 
     uint8_t expected_args = f.arg_count;
+    if (expected_args > MAX_ARGS) {
+        fprintf(stderr, "[ERROR] function '%.*s' declared with %i arguments, but only at most %i are supported\n", (int)f_name.len, f_name.start, f.arg_count, MAX_ARGS);
+        exit(1);
+    }
     int* args_items = malloc(sizeof(int)*f.arg_count);
 
     while (expected_args > 0) {
@@ -928,6 +952,10 @@ void process(const StringView* input, StringView* current_source_file, const cha
 
     content_ptrs = malloc(sizeof(char*) * content_ptrs_cap);
 
+
+    string_consts = SVL_new();
+    string_consts_relocations = SCARL_new();
+
     // printf("input: '");
     // SV_p_printf(input);
     // printf("'\n");
@@ -965,6 +993,41 @@ void process(const StringView* input, StringView* current_source_file, const cha
         .bit_size = 4,
     });
 
+    StringView runtime_error_str = SV_from_string_len("runtime error: ", 15);
+    size_t runtime_error_str_index = add_str_const(runtime_error_str);
+
+    StringView runtime_error__div_zero_str = SV_from_string_len("division by zero\n", 17);
+    size_t runtime_error__div_zero_str_index = add_str_const(runtime_error__div_zero_str);
+
+    uint8_t rt_zero_div_handler[] = {
+        0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00,      // mov    rax,0x1
+        0x48, 0xc7, 0xc7, 0x01, 0x00, 0x00, 0x00,      // mov    rdi,0x1
+        0x48, 0xc7, 0xc6, 0x00, 0x00, 0x00, 0x00,      // mov    rsi,0x00000000 ; addr
+        0x48, 0xc7, 0xc2, (uint8_t)(runtime_error_str.len), 0x00, 0x00, 0x00,      // mov    rdx,10 ; len
+        0x0f, 0x05,                                    // syscall ; write
+
+        0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00,      // mov    rax,0x1
+        0x48, 0xc7, 0xc7, 0x01, 0x00, 0x00, 0x00,      // mov    rdi,0x1
+        0x48, 0xc7, 0xc6, 0x00, 0x00, 0x00, 0x00,      // mov    rsi,0x00000000 ; addr
+        0x48, 0xc7, 0xc2, (uint8_t)(runtime_error__div_zero_str.len), 0x00, 0x00, 0x00,      // mov    rdx,10 ; len
+        0x0f, 0x05,                                    // syscall ; write
+
+        0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00,       // mov    rdi, 1 ; exit code
+        0x48, 0xC7, 0xC0, 0x3C, 0x00, 0x00, 0x00,       // mov    rax, 60 ; exit syscall number
+        0x0F, 0x05                                      // syscall
+    };
+    BS_write_array(&code_output, sizeof(rt_zero_div_handler), rt_zero_div_handler);
+    SCARL_push(&string_consts_relocations, (StringConstAddrRelocation) {
+        .const_index = runtime_error_str_index,
+        .patch_offset = sizeof(entry_point)+7+7+3,
+        .bit_size = 4,
+    });
+    SCARL_push(&string_consts_relocations, (StringConstAddrRelocation) {
+        .const_index = runtime_error__div_zero_str_index,
+        .patch_offset = sizeof(entry_point)+7+7+7+7+2 +7+7+3,
+        .bit_size = 4,
+    });
+
     // get_stmt_block(&svlv);
     //
     // // tokens left
@@ -997,7 +1060,8 @@ void process(const StringView* input, StringView* current_source_file, const cha
         data_ptr += code_output.array[n].cursor;
     }*/
 
-    const uint64_t load_addr = 0x400000;
+    const uint64_t code_load_addr = 0x400000;
+    const uint64_t str_consts_load_addr = 0x800000;
 
     if (!FR_has_function(&functions_registry, SV_from_string_len("main", 4))) {
         fprintf(stderr, "[ERROR] no main function found in the program\n");
@@ -1013,7 +1077,15 @@ void process(const StringView* input, StringView* current_source_file, const cha
         exit(1);
     }
 
-    resolve_function_calls(data, load_addr, &functions_registry, &function_patch_list);
+    FR_register_function(&functions_registry, (Function) {
+        .name = SV_from_string_len("__rt_exception__zero_div", 24),
+        .offset = sizeof(entry_point),
+        .code_size = sizeof(rt_zero_div_handler),
+        .returns_value = false,
+        .arg_count = 0,
+    });
+
+    resolve_function_calls(data, code_load_addr, &functions_registry, &function_patch_list);
     FunctionsRegistry new_fr = FR_new();
     FR_register_function(&new_fr, (Function) {
         .name = SV_from_string_len("_start", 6),
@@ -1022,10 +1094,16 @@ void process(const StringView* input, StringView* current_source_file, const cha
         .returns_value = false,
         .arg_count = 0,
     });
+
     for (size_t n=0; n<functions_registry.len; n++) {
         FR_register_function(&new_fr, functions_registry.array[n]);
     }
-    write_elf64(output_filepath, data, byte_size, load_addr, &new_fr);
+
+
+    SCARL_resolve(&string_consts_relocations, data, str_consts_load_addr, &string_consts);
+
+    write_elf64(output_filepath, data, byte_size, code_load_addr, &new_fr, str_consts_load_addr, &string_consts);
+
 
     BS_free(&code_output);
     free(data);
@@ -1037,4 +1115,6 @@ void process(const StringView* input, StringView* current_source_file, const cha
         free(content_ptrs[n]);
     }
     free(content_ptrs);
+    SVL_p_free(&string_consts);
+    SCARL_free(&string_consts_relocations);
 }

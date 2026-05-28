@@ -355,6 +355,52 @@ void FCPL_register_pach(FunctionCallPatchList* fl, FunctionCallPatch fp) {
 
 // -----------------------------------------------------------------------------------------
 
+StringConstAddrRelocationList SCARL_new(void) {
+    StringConstAddrRelocation* array = malloc(sizeof(StringConstAddrRelocation) * StringConstAddrRelocationList_default_cap);
+    assert(array != NULL);
+    return (StringConstAddrRelocationList) {
+        .array = array,
+        .len = 0,
+        .cap = StringConstAddrRelocationList_default_cap
+
+    };
+}
+
+void SCARL_push(StringConstAddrRelocationList* scl, StringConstAddrRelocation scr) {
+    if (scl->len + 1 > scl->cap) {
+        scl->cap *= 2;
+        StringConstAddrRelocation* new_array = realloc(scl->array, sizeof(StringConstAddrRelocation) * scl->cap);
+        assert(new_array != NULL);
+        scl->array = new_array;
+    }
+    scl->array[scl->len++] = scr;
+}
+
+inline void SCARL_free(StringConstAddrRelocationList* scl) {
+    free(scl->array);
+}
+
+
+void SCARL_resolve(StringConstAddrRelocationList* scarl, uint8_t* array, uint64_t const_section_load_addr, StringViewList* string_consts) {
+    for (size_t n=0; n < scarl->len; n++) {
+        StringConstAddrRelocation rel = scarl->array[n];
+        size_t const_offset = 1; // first byte is NULL
+        for (size_t i=0; i < rel.const_index;  i++) {
+            const_offset += string_consts->array[i].len + 1; // for NULL
+        }
+        if (rel.bit_size != 4) {
+            fprintf(stderr, "[ERROR] <internal> string_const_rel.bit_size != 4, = %i\n", rel.bit_size);
+            exit(1);
+        }
+        uint32_t addr = (uint32_t)const_section_load_addr + (uint32_t)const_offset;
+        memcpy(array + rel.patch_offset, &addr, 4);
+    }
+}
+
+
+
+// -----------------------------------------------------------------------------------------
+
 void resolve_function_calls(uint8_t* array, size_t addr_offset, FunctionsRegistry* fr, FunctionCallPatchList* patches) {
     for (size_t i = 0; i < patches->len; i++) {
         FunctionCallPatch* patch = &patches->array[i];

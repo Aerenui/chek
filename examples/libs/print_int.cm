@@ -10,5 +10,6 @@ int print_int_intern(n)
 end
 
 void print_int(n)
-    call print_int_intern(n);
+    int discard: 0;
+    call print_int_intern(n) into discard;
 end

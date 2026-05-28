@@ -9,6 +9,8 @@ extern size_t tmp_cnt;
 extern size_t label_cnt;
 extern ByteSeg code_output;
 
+extern FunctionCallPatchList function_patch_list;
+
 void process(const StringView*, StringView*, const char*);
 
 typedef struct {

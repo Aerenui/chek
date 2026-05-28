@@ -21,26 +21,31 @@ bool is_alpha(char c) {
 }
 
 int precedence(char op) {
-    if (op == '<' || op == '>' || op == '=') return 0;
-    if (op == '+' || op == '-') return 1;
-    if (op == '*' || op == '/' || op == '%') return 2;
+    if (op == '&' || op == '|') return 0;
+    if (op == '<' || op == '>' || op == '=' || op == '!') return 1;
+    if (op == '+' || op == '-') return 2;
+    if (op == '*' || op == '/' || op == '%') return 3;
 
     fprintf(stderr, "[ERROR] <intern> precedence ( '%c' ) {%i}\n", op, op);
     exit(1);
 }
 
 bool is_operator(char c) {
-    return c == '+' || c == '-' || c == '*' || c == '/' || c == '<' || c == '>' || c == '=' || c == '%';
+    return  c == '+' || c == '-' ||
+            c == '*' || c == '/' ||
+            c == '<' || c == '>' ||
+            c == '=' || c == '%' ||
+            c == '&' || c == '|' || c == '!';
 }
 
-char* format_operator(char c) {
+/*char* format_operator(char c) {
     if (c == '+') return "add";
     if (c == '-') return "sub";
     if (c == '*') return "mul";
     if (c == '/') return "div";
     fprintf(stderr, "[ERROR] unknown operator '%c'\n", c);
     exit(1);
-}
+}*/
 
 
 Loc/*StringView*/ get_int_expr(StringViewListView* view) {
@@ -238,7 +243,9 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view) {
             if (sv.start[0] == '+') emit_op_eax(&code_output, 0x03, s2);
             else if (sv.start[0] == '-') emit_op_eax(&code_output, 0x2B, s2);
             else if (sv.start[0] == '*') emit_imul_eax(&code_output, s2);
-            else if (sv.start[0] == '<' || sv.start[0] == '>' || sv.start[0] == '=') {
+            else if (sv.start[0] == '&') emit_op_eax(&code_output, 0x23, s2); // AND
+            else if (sv.start[0] == '|') emit_op_eax(&code_output, 0x0B, s2); // OR
+            else if (sv.start[0] == '<' || sv.start[0] == '>' || sv.start[0] == '=' || sv.start[0] == '!') {
                 // 1. Do the comparison FIRST while s1 is still naturally in eax.
                 // (We change the ModRM bytes to compare against eax instead of edx)
                 if (s2.kind == LOC_IMMEDIATE) {
@@ -273,6 +280,7 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view) {
                     case '<': BS_write(&code_output, 0x43); break; // CMOVAE (not less)
                     case '>': BS_write(&code_output, 0x46); break; // CMOVBE (not greater)
                     case '=': BS_write(&code_output, 0x45); break; // CMOVNE (not equal)
+                    case '!': BS_write(&code_output, 0x44); break; // CMOVE (not-not-equal, i.e. equal → false)
                     default: {
                         fprintf(stderr, "[ERROR] <internal> invalid switch path\n");
                         exit(1);
@@ -294,6 +302,35 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view) {
                 } else {
                     s2_slot = (s2.kind == LOC_VAR) ? lookup_var(s2.var) : s2.offset;
                 }
+
+                // RUNTIME ZERO DIV CHECK
+
+                // cmp dword ptr [rbp - s2_slot], 0
+                BS_write(&code_output, 0x83);
+                BS_write(&code_output, 0x7D);
+                BS_write(&code_output, (uint8_t)(-s2_slot));
+                BS_write(&code_output, 0x00);
+
+                // jnz +5  (skip the call)
+                BS_write(&code_output, 0x75);
+                BS_write(&code_output, 0x05);
+
+                // call <__rt_exception__zero_div>  (5 bytes, needs patching like your entry_point)
+                size_t divz_patch_cursor = BS_get_cursor(&code_output) + 1;
+                uint8_t call_divz[] = { 0xe8, 0x00, 0x00, 0x00, 0x00 };
+                BS_write_array(&code_output, sizeof(call_divz), call_divz);
+
+                FCPL_register_pach(&function_patch_list, (FunctionCallPatch) {
+                    .name = SV_from_string_len("__rt_exception__zero_div", 24),
+                    .offset = divz_patch_cursor,
+                    .relative = true,
+                    .bit_size = 4,
+                });
+
+                // END OF RUNTIME ZERO DIV CHECK
+
+
+
 
                 // cdq — sign-extend eax into edx:eax
                 BS_write(&code_output, 0x99);
@@ -330,6 +367,10 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view) {
     }
 
     Loc last = LS_pop(&stack2);
+    if (stack2.len > 0) {
+        fprintf(stderr, "[ERROR] <internal> expr-eval stack in not empty after processing\n");
+        exit(1);
+    }
     // caller decides what to do with last (store, return, etc.)
 
     // SVL_p_free(&stack);
