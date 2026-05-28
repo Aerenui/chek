@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "emit.h"
+#include "main.h"
 #include "utils.h"
 
 extern size_t tmp_cnt;
@@ -11,7 +12,7 @@ extern ByteSeg code_output;
 
 extern FunctionCallPatchList function_patch_list;
 
-void process(const StringView*, StringView*, const char*);
+void process(const StringView*, StringView*, const char*, CompilerTarget);
 
 typedef struct {
     StringView name;

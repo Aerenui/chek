@@ -12,9 +12,9 @@ int main(int argc, char* argv[]) {
     StringViewList args = SVL_from_args(argc, argv);
 
     const char* output_name = "out"; // default
+    CompilerTarget format = F_Machine;       // default: unset
     StringView input_src_path = {0};
 
-    // Parse arguments manually
     size_t i = 1;
     while (i < args.len) {
         StringView arg = args.array[i];
@@ -26,6 +26,24 @@ int main(int argc, char* argv[]) {
             }
             output_name = args.array[i + 1].start;
             i += 2;
+        } else if (SV__pv_cmp_eq(&arg, "-f", 2)) {
+            if (i + 1 >= args.len) {
+                fprintf(stderr, "[ERROR] -f requires an argument\n");
+                SVL_p_free(&args);
+                return 1;
+            }
+            StringView fmt = args.array[i + 1];
+            if (SV__pv_cmp_eq(&fmt, "win64", 5)) {
+                format = F_Win64;
+            } else if (SV__pv_cmp_eq(&fmt, "elf64", 5)) {
+                format = F_Elf64;
+            } else {
+                fprintf(stderr, "[ERROR] -f: unknown format '%.*s' (expected win64 or elf64)\n",
+                        (int)fmt.len, fmt.start);
+                SVL_p_free(&args);
+                return 1;
+            }
+            i += 2;
         } else {
             input_src_path = arg;
             i++;
@@ -34,10 +52,21 @@ int main(int argc, char* argv[]) {
 
     if (input_src_path.start == NULL) {
         fprintf(stderr, "[ERROR] expected one argument\n");
-        printf("[USAGE] %.*s [-o <out>] <src>\n",
+        printf("[USAGE] %.*s [-o <out>] [-f win64|elf64] <src>\n",
                (int)args.array[0].len, args.array[0].start);
         SVL_p_free(&args);
         return 1;
+    }
+
+    if (format == F_Machine) {
+        #if defined(_WIN64)
+            format = F_Win64;
+        #elif defined(__ELF__)
+            format = F_Elf64;
+        #else
+            fprintf(stderr, "[ERROR] unrecognized system format, specify format manualy\n");
+            exit(1);
+        #endif
     }
 
     size_t file_size;
@@ -56,7 +85,7 @@ int main(int argc, char* argv[]) {
 
     StringView full_path = SV_from_string(resolved_path_raw);
 
-    process(&src_contents, &full_path, output_name);
+    process(&src_contents, &full_path, output_name, format);
 
     free(content);
 

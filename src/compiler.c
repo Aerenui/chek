@@ -6,9 +6,10 @@
 #include <time.h>
 #include <linux/limits.h>
 
-#include "elf_gen.h"
+#include "target_specific/elf_gen.h"
 #include "expr.h"
 #include "utils.h"
+#include "target_specific/win_gen.h"
 
 size_t tmp_cnt = 0;
 size_t label_cnt = 0;
@@ -63,7 +64,7 @@ int get_stack_frame_max(StackFrame* f) {
 /// returns offset
 size_t add_str_const(StringView sv) {
     SVL_p_push(&string_consts, sv);
-    return string_consts.len-1;
+    return string_consts.len - 1;
 }
 
 static VarEntry* var_table;
@@ -74,7 +75,8 @@ static size_t function_end_id;
 
 int lookup_var(StringView name) {
     // for (size_t i = 0; i < var_table_length; i++) {
-    for (size_t i = var_table_length; i-- > 0; ) { // reversed to find the most inner one
+    for (size_t i = var_table_length; i-- > 0;) {
+        // reversed to find the most inner one
         if (SV__pp_cmp_eq(&var_table[i].name, &name))
             return var_table[i].offset;
     }
@@ -85,9 +87,9 @@ int lookup_var(StringView name) {
 
 int declare_var(StringView name) {
     int slot = alloc_stack_slot(&frame);
-    if (var_table_length+1 > var_table_cap) {
+    if (var_table_length + 1 > var_table_cap) {
         var_table_cap *= 2;
-        VarEntry* new_array = realloc(var_table, sizeof(VarEntry)*var_table_cap);
+        VarEntry* new_array = realloc(var_table, sizeof(VarEntry) * var_table_cap);
         assert(new_array != NULL);
         var_table = new_array;
     }
@@ -147,7 +149,7 @@ StringViewList p_tokenize(const StringView* sv) {
             SVL_p_push(&ot, SV_lrslice_from_SV(sv, i, 1));
             i++;
             continue;
-            }
+        }
         if (sv->start[i] == '"') {
             size_t start = i;
             i++;
@@ -167,7 +169,7 @@ StringViewList p_tokenize(const StringView* sv) {
                sv->start[i] != ';' && sv->start[i] != ':' && sv->start[i] != ',' &&
                sv->start[i] != '"') {
             i++;
-               }
+        }
         SVL_p_push(&ot, SV_lrslice_from_SV(sv, start, i - start));
     }
     return ot;
@@ -220,7 +222,8 @@ void get_return_stmt(StringViewListView* view, bool should_return_value) {
         SVLV_consume_one(view);
     } else {
         if (!should_return_value) {
-            fprintf(stderr, "[ERROR] expected ';' for void function, got '%.*s'\n", (int)semi_or_val.len, semi_or_val.start);
+            fprintf(stderr, "[ERROR] expected ';' for void function, got '%.*s'\n", (int) semi_or_val.len,
+                    semi_or_val.start);
             exit(1);
         }
         Loc val = get_int_expr(view);
@@ -231,15 +234,15 @@ void get_return_stmt(StringViewListView* view, bool should_return_value) {
     // JMP fn_end_<id> (placeholder)
     BS_write(&code_output, 0xE9);
     size_t jmp_patch = BS_get_cursor(&code_output);
-    size_t jmp_end   = jmp_patch + 4;
+    size_t jmp_end = jmp_patch + 4;
     BS_write_array(&code_output, 4, (uint8_t[]){0x00, 0x00, 0x00, 0x00});
     RL_push(&relocations, (Relocation){
-        .patch_pos  = jmp_patch,
-        .patch_size = 4,
-        .inst_end   = jmp_end,
-        .id         = function_end_id,
-        .kind       = REL_END,
-    });
+                .patch_pos = jmp_patch,
+                .patch_size = 4,
+                .inst_end = jmp_end,
+                .id = function_end_id,
+                .kind = REL_END,
+            });
 }
 
 
@@ -253,9 +256,6 @@ void get_stmt_block(StringViewListView* view, bool should_return_value) {
         get_stmt(view, should_return_value);
     }
 }
-
-
-
 
 
 void get_int_var_dec(StringViewListView* view) {
@@ -351,7 +351,8 @@ void get_if_conditional(StringViewListView* view, bool should_return_value) {
 
     StringView then = SVLV_consume_one(view);
     if (!SV__pv_cmp_eq(&then, "then", 4)) {
-        fprintf(stderr, "[ERROR] expected 'then' after expression in if conditional, got '%.*s'\n", (int) then.len, then.start);
+        fprintf(stderr, "[ERROR] expected 'then' after expression in if conditional, got '%.*s'\n", (int) then.len,
+                then.start);
         exit(1);
     }
 
@@ -364,15 +365,15 @@ void get_if_conditional(StringViewListView* view, bool should_return_value) {
     // JE else_<id> (placeholder)
     BS_write_array(&code_output, 2, (uint8_t[]){0x0F, 0x84});
     size_t je_patch = BS_get_cursor(&code_output);
-    size_t je_end   = je_patch + 4;
+    size_t je_end = je_patch + 4;
     BS_write_array(&code_output, 4, (uint8_t[]){0x00, 0x00, 0x00, 0x00});
     RL_push(&relocations, (Relocation){
-        .patch_pos  = je_patch,
-        .patch_size = 4,
-        .inst_end   = je_end,
-        .id         = id,
-        .kind       = REL_ELSE,
-    });
+                .patch_pos = je_patch,
+                .patch_size = 4,
+                .inst_end = je_end,
+                .id = id,
+                .kind = REL_ELSE,
+            });
 
     int frame_mext_offset_snapshot = get_frame()->next_offset;
     size_t var_tale_length_snapshot = var_table_length;
@@ -386,27 +387,27 @@ void get_if_conditional(StringViewListView* view, bool should_return_value) {
         // JMP end_<id> (placeholder)
         BS_write(&code_output, 0xE9);
         size_t jmp_patch = BS_get_cursor(&code_output);
-        size_t jmp_end   = jmp_patch + 4;
+        size_t jmp_end = jmp_patch + 4;
         BS_write_array(&code_output, 4, (uint8_t[]){0x00, 0x00, 0x00, 0x00});
         RL_push(&relocations, (Relocation){
-            .patch_pos  = jmp_patch,
-            .patch_size = 4,
-            .inst_end   = jmp_end,
-            .id         = id,
-            .kind       = REL_END,
-        });
+                    .patch_pos = jmp_patch,
+                    .patch_size = 4,
+                    .inst_end = jmp_end,
+                    .id = id,
+                    .kind = REL_END,
+                });
 
         // define else_<id>
-        LL_push(&labels, (Label){ .offset = BS_get_cursor(&code_output), .id = id, .kind = REL_ELSE });
+        LL_push(&labels, (Label){.offset = BS_get_cursor(&code_output), .id = id, .kind = REL_ELSE});
 
         get_stmt_block(view, should_return_value);
     } else {
         // no else — JE jumps directly to end, define else_<id> here as same as end
-        LL_push(&labels, (Label){ .offset = BS_get_cursor(&code_output), .id = id, .kind = REL_ELSE });
+        LL_push(&labels, (Label){.offset = BS_get_cursor(&code_output), .id = id, .kind = REL_ELSE});
     }
 
     // define end_<id>
-    LL_push(&labels, (Label){ .offset = BS_get_cursor(&code_output), .id = id, .kind = REL_END });
+    LL_push(&labels, (Label){.offset = BS_get_cursor(&code_output), .id = id, .kind = REL_END});
 
     StringView end = SVLV_consume_one(view);
     if (!SV__pv_cmp_eq(&end, "end", 3)) {
@@ -423,13 +424,14 @@ void get_while_conditional(StringViewListView* view, bool should_return_value) {
     const size_t id = label_cnt++;
 
     // define loop_<id> (loop back target)
-    LL_push(&labels, (Label){ .offset = BS_get_cursor(&code_output), .id = id, .kind = REL_LOOP });
+    LL_push(&labels, (Label){.offset = BS_get_cursor(&code_output), .id = id, .kind = REL_LOOP});
 
     const Loc cond = get_int_expr(view);
 
     StringView do_keyword = SVLV_consume_one(view);
     if (!SV__pv_cmp_eq(&do_keyword, "do", 2)) {
-        fprintf(stderr, "[ERROR] expected 'do' after expression in while conditional, got '%.*s'\n", (int) do_keyword.len, do_keyword.start);
+        fprintf(stderr, "[ERROR] expected 'do' after expression in while conditional, got '%.*s'\n",
+                (int) do_keyword.len, do_keyword.start);
         exit(1);
     }
 
@@ -440,15 +442,15 @@ void get_while_conditional(StringViewListView* view, bool should_return_value) {
     // JE end_<id> (placeholder)
     BS_write_array(&code_output, 2, (uint8_t[]){0x0F, 0x84});
     size_t je_patch = BS_get_cursor(&code_output);
-    size_t je_end   = je_patch + 4;
+    size_t je_end = je_patch + 4;
     BS_write_array(&code_output, 4, (uint8_t[]){0x00, 0x00, 0x00, 0x00});
     RL_push(&relocations, (Relocation){
-        .patch_pos  = je_patch,
-        .patch_size = 4,
-        .inst_end   = je_end,
-        .id         = id,
-        .kind       = REL_END,
-    });
+                .patch_pos = je_patch,
+                .patch_size = 4,
+                .inst_end = je_end,
+                .id = id,
+                .kind = REL_END,
+            });
 
     // body
     get_stmt_block(view, should_return_value);
@@ -456,18 +458,18 @@ void get_while_conditional(StringViewListView* view, bool should_return_value) {
     // JMP loop_<id> (placeholder)
     BS_write(&code_output, 0xE9);
     size_t jmp_patch = BS_get_cursor(&code_output);
-    size_t jmp_end   = jmp_patch + 4;
+    size_t jmp_end = jmp_patch + 4;
     BS_write_array(&code_output, 4, (uint8_t[]){0x00, 0x00, 0x00, 0x00});
     RL_push(&relocations, (Relocation){
-        .patch_pos  = jmp_patch,
-        .patch_size = 4,
-        .inst_end   = jmp_end,
-        .id         = id,
-        .kind       = REL_LOOP,
-    });
+                .patch_pos = jmp_patch,
+                .patch_size = 4,
+                .inst_end = jmp_end,
+                .id = id,
+                .kind = REL_LOOP,
+            });
 
     // define end_<id>
-    LL_push(&labels, (Label){ .offset = BS_get_cursor(&code_output), .id = id, .kind = REL_END });
+    LL_push(&labels, (Label){.offset = BS_get_cursor(&code_output), .id = id, .kind = REL_END});
 
     StringView end = SVLV_consume_one(view);
     if (!SV__pv_cmp_eq(&end, "end", 3)) {
@@ -499,20 +501,22 @@ void get_print_stmt(StringViewListView* view) {
                 // int offset = frame.next_offset;
                 // frame.next_offset += 4;
 
-                BS_write_array(&code_output, 3, (uint8_t[]){ 0x89, 0x45, (uint8_t)(-offset) });
+                BS_write_array(&code_output, 3, (uint8_t[]){0x89, 0x45, (uint8_t) (-offset)});
 
                 // mov rax, 1  (sys_write)
                 // mov rdi, 1  (stdout)
-                BS_write_array(&code_output, 14, (uint8_t[]){ 0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00 });
+                BS_write_array(&code_output, 14, (uint8_t[]){
+                                   0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00
+                               });
 
                 // lea rsi, [rbp - offset]
                 BS_write(&code_output, 0x48);
                 BS_write(&code_output, 0x8D);
                 BS_write(&code_output, 0x75);
-                BS_write(&code_output, (uint8_t)(-offset));
+                BS_write(&code_output, (uint8_t) (-offset));
 
                 // mov rdx, 1  +  syscall
-                BS_write_array(&code_output, 9, (uint8_t[]){ 0x48, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x0F, 0x05 });
+                BS_write_array(&code_output, 9, (uint8_t[]){0x48, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x0F, 0x05});
                 break;
             }
             case LOC_VAR: {
@@ -531,17 +535,19 @@ void get_print_stmt(StringViewListView* view) {
 
                 // 0:  48 c7 c0 01 00 00 00    mov    rax,0x1
                 // 7:  48 c7 c7 01 00 00 00    mov    rdi,0x1
-                BS_write_array(&code_output, 14, (uint8_t[]){ 0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00 });
+                BS_write_array(&code_output, 14, (uint8_t[]){
+                                   0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00
+                               });
 
                 int slot = lookup_var(expr.var);
-                BS_write(&code_output, 0x48);             // REX.W prefix
-                BS_write(&code_output, 0x8D);             // Opcode for LEA
-                BS_write(&code_output, 0x75);             // ModR/M byte for rsi, [rbp + disp8]
+                BS_write(&code_output, 0x48); // REX.W prefix
+                BS_write(&code_output, 0x8D); // Opcode for LEA
+                BS_write(&code_output, 0x75); // ModR/M byte for rsi, [rbp + disp8]
                 BS_write(&code_output, (uint8_t) (-slot)); // 8-bit negative displacement
 
                 // 15: 48 c7 c2 01 00 00 00    mov    rdx,0x1
                 // 1c: 0f 05                   syscall
-                BS_write_array(&code_output, 9, (uint8_t[]){ 0x48, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x0F, 0x05 });
+                BS_write_array(&code_output, 9, (uint8_t[]){0x48, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x0F, 0x05});
                 break;
             }
         }
@@ -550,27 +556,30 @@ void get_print_stmt(StringViewListView* view) {
 }
 
 #define MAX_ARGS 6
+
 void get_function_call_stmt(StringViewListView* view) {
     StringView f_name = SVLV_consume_one(view);
     if (!FR_has_function(&functions_registry, f_name)) {
-        fprintf(stderr, "[ERROR] function '%.*s' not found\n", (int)f_name.len, f_name.start);
+        fprintf(stderr, "[ERROR] function '%.*s' not found\n", (int) f_name.len, f_name.start);
         exit(1);
     }
     Function f = FR_lookup_function(&functions_registry, f_name);
 
     StringView lbracket = SVLV_consume_one(view);
     if (!SV__pv_cmp_eq(&lbracket, "(", 1)) {
-        fprintf(stderr, "[ERROR] expected '(' after function name in function call, got '%.*s'\n", (int)lbracket.len, lbracket.start);
+        fprintf(stderr, "[ERROR] expected '(' after function name in function call, got '%.*s'\n", (int) lbracket.len,
+                lbracket.start);
         exit(1);
     }
 
 
     uint8_t expected_args = f.arg_count;
     if (expected_args > MAX_ARGS) {
-        fprintf(stderr, "[ERROR] function '%.*s' declared with %i arguments, but only at most %i are supported\n", (int)f_name.len, f_name.start, f.arg_count, MAX_ARGS);
+        fprintf(stderr, "[ERROR] function '%.*s' declared with %i arguments, but only at most %i are supported\n",
+                (int) f_name.len, f_name.start, f.arg_count, MAX_ARGS);
         exit(1);
     }
-    int* args_items = malloc(sizeof(int)*f.arg_count);
+    int* args_items = malloc(sizeof(int) * f.arg_count);
 
     while (expected_args > 0) {
         StringView inspect = SVLV_inspect_back(view);
@@ -579,7 +588,7 @@ void get_function_call_stmt(StringViewListView* view) {
             exit(1);
         }
         int slot = alloc_stack_slot(&frame); // alloc_tmp_stack_slot
-        args_items[f.arg_count-expected_args] = slot;
+        args_items[f.arg_count - expected_args] = slot;
 
         Loc last = get_int_expr(view);
         // printf("function <%.*s>: arg <%.*s>\n" (int)f_name.len, f_name.start, );
@@ -596,7 +605,7 @@ void get_function_call_stmt(StringViewListView* view) {
         if (expected_args > 0) {
             StringView comma = SVLV_consume_one(view);
             if (!SV__pv_cmp_eq(&comma, ",", 1)) {
-                fprintf(stderr, "[ERROR] expected ',' function call args, got '%.*s'\n", (int)comma.len, comma.start);
+                fprintf(stderr, "[ERROR] expected ',' function call args, got '%.*s'\n", (int) comma.len, comma.start);
                 exit(1);
             }
         }
@@ -604,17 +613,18 @@ void get_function_call_stmt(StringViewListView* view) {
 
     StringView rbracket = SVLV_consume_one(view);
     if (!SV__pv_cmp_eq(&rbracket, ")", 1)) {
-        fprintf(stderr, "[ERROR] function <%.*s>: expected ')' function call after args, got '%.*s'\n", (int)f_name.len, f_name.start ,(int)rbracket.len, rbracket.start);
+        fprintf(stderr, "[ERROR] function <%.*s>: expected ')' function call after args, got '%.*s'\n",
+                (int) f_name.len, f_name.start, (int) rbracket.len, rbracket.start);
         exit(1);
     }
 
     // rdi, rsi, rdx, rcx, r8, r9
-    static const uint8_t arg_regs_modrm[] = { 0x7D, 0x75, 0x55, 0x4D, 0x00, 0x00 };
+    static const uint8_t arg_regs_modrm[] = {0x7D, 0x75, 0x55, 0x4D, 0x00, 0x00};
     // REX.W prefix needed for r8/r9 (extended registers)
-    static const uint8_t arg_regs_rex[]   = { 0x48, 0x48, 0x48, 0x48, 0x4C, 0x4C };
+    static const uint8_t arg_regs_rex[] = {0x48, 0x48, 0x48, 0x48, 0x4C, 0x4C};
     // opcode: MOV reg, [rbp - disp8]  ->  8B /r
     // for r8/r9 the ModR/M is 0x45/0x4D with REX.R set (via 0x4C)
-    static const uint8_t arg_regs_r8_modrm[] = { 0x45, 0x4D };
+    static const uint8_t arg_regs_r8_modrm[] = {0x45, 0x4D};
 
     for (int i = 0; i < f.arg_count; i++) {
         int slot = args_items[i];
@@ -624,14 +634,14 @@ void get_function_call_stmt(StringViewListView* view) {
             BS_write(&code_output, arg_regs_rex[i]);
             BS_write(&code_output, 0x8B);
             BS_write(&code_output, arg_regs_modrm[i]);
-            BS_write(&code_output, (uint8_t)(-slot));
+            BS_write(&code_output, (uint8_t) (-slot));
         } else {
             // MOV r8/r9, [rbp - slot]
             // 4C 8B ModRM disp8
             BS_write(&code_output, 0x4C);
             BS_write(&code_output, 0x8B);
             BS_write(&code_output, arg_regs_r8_modrm[i - 4]);
-            BS_write(&code_output, (uint8_t)(-slot));
+            BS_write(&code_output, (uint8_t) (-slot));
         }
         // free_tmp_stack_slot(&frame, slot);
     }
@@ -639,25 +649,24 @@ void get_function_call_stmt(StringViewListView* view) {
     free(args_items);
 
 
-
     size_t pos = BS_get_cursor(&code_output) + 1;
     uint8_t call[] = {
         0xe8, 0x00, 0x00, 0x00, 0x00, //          call <>
     };
     BS_write_array(&code_output, sizeof(call), call);
-    FCPL_register_pach(&function_patch_list, (FunctionCallPatch) {
-        .name = f.name,
-        .offset = pos,
-        .relative = true,
-        .bit_size = 4,
-    });
+    FCPL_register_pach(&function_patch_list, (FunctionCallPatch){
+                           .name = f.name,
+                           .offset = pos,
+                           .relative = true,
+                           .bit_size = 4,
+                       });
 
 
     if (f.returns_value) {
         StringView semi_or_into = SVLV_inspect_back(view);
         if (SV__pv_cmp_eq(&semi_or_into, ";", 1)) {
             get_semicolon(view);
-            printf("[warning] discarding return value of function <%.*s>\n", (int)f.name.len, f.name.start);
+            printf("[warning] discarding return value of function <%.*s>\n", (int) f.name.len, f.name.start);
         } else if (SV__pv_cmp_eq(&semi_or_into, "into", 4)) {
             SVLV_consume_one(view); // into
             StringView into_var = SVLV_consume_one(view);
@@ -669,14 +678,13 @@ void get_function_call_stmt(StringViewListView* view) {
 
             get_semicolon(view);
         } else {
-            fprintf(stderr, "[ERROR] expected either ';' or 'into' after function call, got '%.*s'\n", (int)semi_or_into.len ,semi_or_into.start);
+            fprintf(stderr, "[ERROR] expected either ';' or 'into' after function call, got '%.*s'\n",
+                    (int) semi_or_into.len, semi_or_into.start);
             exit(1);
         }
     } else {
         get_semicolon(view);
     }
-
-
 }
 
 void get_stmt(StringViewListView* view, bool should_return_value) {
@@ -711,9 +719,8 @@ void get_function(StringViewListView* view) {
     if (SV__pv_cmp_eq(&ret_type, "int", 3)) {
         returns_value = true;
     } else if (SV__pv_cmp_eq(&ret_type, "void", 4)) {
-
     } else {
-        fprintf(stderr, "[ERROR] unexpected token '%.*s'\n", (int)ret_type.len, ret_type.start);
+        fprintf(stderr, "[ERROR] unexpected token '%.*s'\n", (int) ret_type.len, ret_type.start);
         exit(1);
     }
 
@@ -721,7 +728,7 @@ void get_function(StringViewListView* view) {
 
     StringView f_args_start = SVLV_consume_one(view);
     if (!SV__pv_cmp_eq(&f_args_start, "(", 1)) {
-        fprintf(stderr, "[ERROR] expected '(', got '%.*s'\n", (int)f_args_start.len, f_args_start.start);
+        fprintf(stderr, "[ERROR] expected '(', got '%.*s'\n", (int) f_args_start.len, f_args_start.start);
         exit(1);
     }
 
@@ -739,26 +746,26 @@ void get_function(StringViewListView* view) {
         } else if (SV__pv_cmp_eq(&comma, ",", 1)) {
             // ok
         } else {
-            fprintf(stderr, "[ERROR] expected comma or ')', got '%.*s'\n", (int)comma.len, comma.start);
+            fprintf(stderr, "[ERROR] expected comma or ')', got '%.*s'\n", (int) comma.len, comma.start);
             exit(1);
         }
     }
 
     // temp write
-    FR_register_function(&functions_registry, (Function) {
-        .name = f_name,
-        .arg_count = f_args.len,
-        .offset = f_start_cursor,
-        .code_size = 0,
-        .returns_value = returns_value
-    });
+    FR_register_function(&functions_registry, (Function){
+                             .name = f_name,
+                             .arg_count = f_args.len,
+                             .offset = f_start_cursor,
+                             .code_size = 0,
+                             .returns_value = returns_value
+                         });
 
 
     // todo: emit stack preparation for frame
     uint8_t prologue[] = {
-        0x55,                               // push rbp
-        0x48, 0x89, 0xE5,                   // mov rbp, rsp
-        0x48, 0x83, 0xEC, 0xFF              // sub rsp, N
+        0x55, // push rbp
+        0x48, 0x89, 0xE5, // mov rbp, rsp
+        0x48, 0x83, 0xEC, 0xFF // sub rsp, N
     };
     BS_write_array(&code_output, 8, prologue);
     size_t prologue_frame_override_pos = BS_get_cursor(&code_output) - 1;
@@ -767,17 +774,17 @@ void get_function(StringViewListView* view) {
     // todo: read arguments into variables into stack
 
     // static const uint8_t param_store_rex[]   = { 0x48, 0x48, 0x48, 0x48, 0x4C, 0x4C };
-    static const uint8_t param_store_modrm[] = { 0x7D, 0x75, 0x55, 0x4D, 0x45, 0x4D }; // rdi,rsi,rdx,rcx,r8,r9
+    static const uint8_t param_store_modrm[] = {0x7D, 0x75, 0x55, 0x4D, 0x45, 0x4D}; // rdi,rsi,rdx,rcx,r8,r9
 
     for (size_t i = 0; i < f_args.len; i++) {
-        int slot = declare_var(f_args.array[i]);  // same as local var
+        int slot = declare_var(f_args.array[i]); // same as local var
         // printf("in function <%.*s>, param '%.*s'\n", (int)f_name.len, f_name.start, (int)f_args.array[i].len, f_args.array[i].start);
 
         // MOV [rbp - slot], rdi/rsi/...
         // BS_write(&code_output, param_store_rex[i]); // no rex.w, just 32-bit
         BS_write(&code_output, 0x89);
         BS_write(&code_output, param_store_modrm[i]);
-        BS_write(&code_output, (uint8_t)(-slot));
+        BS_write(&code_output, (uint8_t) (-slot));
     }
 
 
@@ -787,28 +794,27 @@ void get_function(StringViewListView* view) {
     get_stmt_block(view, returns_value);
 
 
-
     StringView f_end = SVLV_consume_one(view);
     if (!SV__pv_cmp_eq(&f_end, "end", 3)) {
-        fprintf(stderr, "[ERROR] expected 'end', got '%.*s'\n", (int)f_end.len, f_end.start);
+        fprintf(stderr, "[ERROR] expected 'end', got '%.*s'\n", (int) f_end.len, f_end.start);
         exit(1);
     }
 
     // define fn_end_<id>
-    LL_push(&labels, (Label){ .offset = BS_get_cursor(&code_output), .id = function_end_id, .kind = REL_END });
+    LL_push(&labels, (Label){.offset = BS_get_cursor(&code_output), .id = function_end_id, .kind = REL_END});
 
     size_t cursor_snap = BS_get_cursor(&code_output);
     BS_set_cursor(&code_output, prologue_frame_override_pos);
-    BS_write(&code_output, (uint8_t)((get_stack_frame_max(get_frame()) + 15) & ~15));
+    BS_write(&code_output, (uint8_t) ((get_stack_frame_max(get_frame()) + 15) & ~15));
     BS_set_cursor(&code_output, cursor_snap);
 
 
     // function_end_id
 
     uint8_t epilogue[] = {
-        0x48, 0x83, 0xC4, (uint8_t)((get_stack_frame_max(get_frame()) + 15) & ~15), // add rsp, N
-        0x5D,                                       // pop rbp
-        0xC3,                                       // ret
+        0x48, 0x83, 0xC4, (uint8_t) ((get_stack_frame_max(get_frame()) + 15) & ~15), // add rsp, N
+        0x5D, // pop rbp
+        0xC3, // ret
     };
     BS_write_array(&code_output, 6, epilogue);
 
@@ -816,13 +822,13 @@ void get_function(StringViewListView* view) {
 
     // printf("f_start_cursor = %lu\n", f_start_cursor);
 
-    FR_overwrite_function(&functions_registry, (Function) {
-        .name = f_name,
-        .arg_count = f_args.len,
-        .offset = f_start_cursor,
-        .code_size = f_end_cursor - f_start_cursor,
-        .returns_value = returns_value
-    });
+    FR_overwrite_function(&functions_registry, (Function){
+                              .name = f_name,
+                              .arg_count = f_args.len,
+                              .offset = f_start_cursor,
+                              .code_size = f_end_cursor - f_start_cursor,
+                              .returns_value = returns_value
+                          });
 
 
     resolve_frame();
@@ -838,15 +844,14 @@ void create_frame(void) {
     assert(labels.array != NULL);
 
     // reset frame
-    frame = (StackFrame) { .next_offset = 4 };
+    frame = (StackFrame){.next_offset = 4};
 
     // reset var registry
     // static VarEntry var_table[256];
     // static int var_count = 0;
     var_table_length = 0;
     var_table_cap = 4;
-    var_table = malloc(sizeof(VarEntry)*var_table_cap);
-
+    var_table = malloc(sizeof(VarEntry) * var_table_cap);
 }
 
 void resolve_frame(void) {
@@ -865,16 +870,16 @@ bool is_include_next(StringViewListView* list) {
 }
 
 bool is_quoted_string(StringView* sv) {
-    return sv->len >= 2 && sv->start[0] == '"' && sv->start[sv->len-1] == '"';
+    return sv->len >= 2 && sv->start[0] == '"' && sv->start[sv->len - 1] == '"';
 }
 
-void compile(StringViewListView*, StringView* current_source_file);
+void compile(StringViewListView*, StringView* current_source_file, CompilerTarget);
 
-void resolve_import(StringViewListView* list, StringView* current_source_file) {
+void resolve_import(StringViewListView* list, StringView* current_source_file, CompilerTarget target) {
     SVLV_consume_one(list); // include KW
     StringView path = SVLV_consume_one(list);
     if (!is_quoted_string(&path)) {
-        fprintf(stderr, "[ERROR] include excepted quoted string, but got '%.*s'\n", (int)path.len, path.start);
+        fprintf(stderr, "[ERROR] include excepted quoted string, but got '%.*s'\n", (int) path.len, path.start);
         exit(1);
     }
 
@@ -899,7 +904,7 @@ void resolve_import(StringViewListView* list, StringView* current_source_file) {
 
     StringView resolved_path = SV_from_string(resolved_path_raw);
 
-    for (size_t n=0; n < import_table.len; n++) {
+    for (size_t n = 0; n < import_table.len; n++) {
         if (SV__pp_cmp_eq(&import_table.array[n], &resolved_path)) {
             return;
         }
@@ -914,32 +919,49 @@ void resolve_import(StringViewListView* list, StringView* current_source_file) {
     StringViewList svl = p_tokenize(&content);
     StringViewListView svlv = SVLV_from_SVL(&svl);
 
-    free((void*)path_c);
-    free((void*)source_path_c);
+    free((void *) path_c);
+    free((void *) source_path_c);
 
-    compile(&svlv, &resolved_path);
+    compile(&svlv, &resolved_path, target);
 
     SVL_p_free(&svl);
 
     if (content_ptrs_len + 1 > content_ptrs_cap) {
         content_ptrs_cap *= 2;
-        char** new_array = realloc(content_ptrs, content_ptrs_cap * sizeof(char*));
+        char** new_array = realloc(content_ptrs, content_ptrs_cap * sizeof(char *));
         assert(new_array != NULL);
         content_ptrs = new_array;
     }
     content_ptrs[content_ptrs_len++] = content_raw;
 }
 
-void compile(StringViewListView* list, StringView* current_source_file) {
+void compile(StringViewListView* list, StringView* current_source_file, CompilerTarget target) {
     while (is_include_next(list)) {
-        resolve_import(list, current_source_file);
+        resolve_import(list, current_source_file, target);
     }
-    while(list->len > 0) {
+    while (list->len > 0) {
         get_function(list);
     }
 }
 
-void process(const StringView* input, StringView* current_source_file, const char* output_filepath) {
+void process_elf64(const StringView* input, StringView* current_source_file, const char* output_filepath);
+void process_win64(const StringView* input, StringView* current_source_file, const char* output_filepath);
+
+void process(const StringView* input, StringView* current_source_file, const char* output_filepath, CompilerTarget target) {
+    switch (target) {
+        case F_Elf64:
+            process_elf64(input, current_source_file, output_filepath);
+            break;
+        case F_Win64:
+            process_win64(input, current_source_file, output_filepath);
+            break;
+        case F_Machine:
+            fprintf(stderr, "[ERROR] <internal> called process with F_Machine\n");
+            exit(1);
+    }
+}
+
+void process_elf64(const StringView* input, StringView* current_source_file, const char* output_filepath) {
     code_output = BS_new();
     assert(code_output.array != NULL);
 
@@ -950,48 +972,32 @@ void process(const StringView* input, StringView* current_source_file, const cha
 
     SVL_p_push(&import_table, *current_source_file);
 
-    content_ptrs = malloc(sizeof(char*) * content_ptrs_cap);
+    content_ptrs = malloc(sizeof(char *) * content_ptrs_cap);
 
 
     string_consts = SVL_new();
     string_consts_relocations = SCARL_new();
 
-    // printf("input: '");
-    // SV_p_printf(input);
-    // printf("'\n");
 
-
-    // StringViewList svl = SV_p_split_by_char(input, ' ');
     StringViewList svl = p_tokenize(input);
-
-    /*printf("tokens: [");
-    for (size_t i = 0; i < svl.len; i++) {
-        putc('\'', stdout);
-        SV_p_printf(&svl.array[i]);
-        if (i + 1 != svl.len)
-            printf("', ");
-        else
-            printf("']\n");
-    }*/
 
     StringViewListView svlv = SVLV_from_SVL(&svl);
 
-    // printf("------------------------------\n");
 
     size_t entry_point_patch_cursor = BS_get_cursor(&code_output) + 1;
     uint8_t entry_point[] = {
         0xe8, 0x00, 0x00, 0x00, 0x00, //          call   5 <_main+0x5>
-        0x48, 0x89, 0xc7,             //          mov    rdi,rax
-        0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00,  //         mov    rax,0x3c
+        0x48, 0x89, 0xc7, //          mov    rdi,rax
+        0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00, //         mov    rax,0x3c
         0x0f, 0x05, //                   syscall
     };
     BS_write_array(&code_output, sizeof(entry_point), entry_point);
-    FCPL_register_pach(&function_patch_list, (FunctionCallPatch) {
-        .name = SV_from_string_len("main", 4),
-        .offset = entry_point_patch_cursor,
-        .relative = true,
-        .bit_size = 4,
-    });
+    FCPL_register_pach(&function_patch_list, (FunctionCallPatch){
+                           .name = SV_from_string_len("main", 4),
+                           .offset = entry_point_patch_cursor,
+                           .relative = true,
+                           .bit_size = 4,
+                       });
 
     StringView runtime_error_str = SV_from_string_len("runtime error: ", 15);
     size_t runtime_error_str_index = add_str_const(runtime_error_str);
@@ -1000,65 +1006,45 @@ void process(const StringView* input, StringView* current_source_file, const cha
     size_t runtime_error__div_zero_str_index = add_str_const(runtime_error__div_zero_str);
 
     uint8_t rt_zero_div_handler[] = {
-        0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00,      // mov    rax,0x1
-        0x48, 0xc7, 0xc7, 0x01, 0x00, 0x00, 0x00,      // mov    rdi,0x1
-        0x48, 0xc7, 0xc6, 0x00, 0x00, 0x00, 0x00,      // mov    rsi,0x00000000 ; addr
-        0x48, 0xc7, 0xc2, (uint8_t)(runtime_error_str.len), 0x00, 0x00, 0x00,      // mov    rdx,10 ; len
-        0x0f, 0x05,                                    // syscall ; write
+        0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, // mov    rax,0x1
+        0x48, 0xc7, 0xc7, 0x01, 0x00, 0x00, 0x00, // mov    rdi,0x1
+        0x48, 0xc7, 0xc6, 0x00, 0x00, 0x00, 0x00, // mov    rsi,0x00000000 ; addr
+        0x48, 0xc7, 0xc2, (uint8_t) (runtime_error_str.len), 0x00, 0x00, 0x00, // mov    rdx,10 ; len
+        0x0f, 0x05, // syscall ; write
 
-        0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00,      // mov    rax,0x1
-        0x48, 0xc7, 0xc7, 0x01, 0x00, 0x00, 0x00,      // mov    rdi,0x1
-        0x48, 0xc7, 0xc6, 0x00, 0x00, 0x00, 0x00,      // mov    rsi,0x00000000 ; addr
-        0x48, 0xc7, 0xc2, (uint8_t)(runtime_error__div_zero_str.len), 0x00, 0x00, 0x00,      // mov    rdx,10 ; len
-        0x0f, 0x05,                                    // syscall ; write
+        0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, // mov    rax,0x1
+        0x48, 0xc7, 0xc7, 0x01, 0x00, 0x00, 0x00, // mov    rdi,0x1
+        0x48, 0xc7, 0xc6, 0x00, 0x00, 0x00, 0x00, // mov    rsi,0x00000000 ; addr
+        0x48, 0xc7, 0xc2, (uint8_t) (runtime_error__div_zero_str.len), 0x00, 0x00, 0x00, // mov    rdx,10 ; len
+        0x0f, 0x05, // syscall ; write
 
-        0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00,       // mov    rdi, 1 ; exit code
-        0x48, 0xC7, 0xC0, 0x3C, 0x00, 0x00, 0x00,       // mov    rax, 60 ; exit syscall number
-        0x0F, 0x05                                      // syscall
+        0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00, // mov    rdi, 1 ; exit code
+        0x48, 0xC7, 0xC0, 0x3C, 0x00, 0x00, 0x00, // mov    rax, 60 ; exit syscall number
+        0x0F, 0x05 // syscall
     };
     BS_write_array(&code_output, sizeof(rt_zero_div_handler), rt_zero_div_handler);
-    SCARL_push(&string_consts_relocations, (StringConstAddrRelocation) {
-        .const_index = runtime_error_str_index,
-        .patch_offset = sizeof(entry_point)+7+7+3,
-        .bit_size = 4,
-    });
-    SCARL_push(&string_consts_relocations, (StringConstAddrRelocation) {
-        .const_index = runtime_error__div_zero_str_index,
-        .patch_offset = sizeof(entry_point)+7+7+7+7+2 +7+7+3,
-        .bit_size = 4,
-    });
+    SCARL_push(&string_consts_relocations, (StringConstAddrRelocation){
+                   .const_index = runtime_error_str_index,
+                   .patch_offset = sizeof(entry_point) + 7 + 7 + 3,
+                   .bit_size = 4,
+               });
+    SCARL_push(&string_consts_relocations, (StringConstAddrRelocation){
+                   .const_index = runtime_error__div_zero_str_index,
+                   .patch_offset = sizeof(entry_point) + 7 + 7 + 7 + 7 + 2 + 7 + 7 + 3,
+                   .bit_size = 4,
+               });
 
-    // get_stmt_block(&svlv);
-    //
-    // // tokens left
-    // if (svlv.len != 0) {
-    //     fprintf(stderr, "[ERROR] tokens left\n");
-    //     SVL_p_free(&svl);
-    //     exit(1);
-    // }
 
-    compile(&svlv, current_source_file);
+
+    compile(&svlv, current_source_file, F_Elf64);
 
     SVL_p_free(&svl);
 
-    // printf("------------------------------\n");
-    // printf("        BS-code segs\n");
-    // printf("code_output.len=%lu\n", code_output.len);
-    // printf("------------------------------\n");
-
     size_t byte_size = code_output.len;
-    // BS_print(&code_output);
-
-    // printf("------------------------------\n");
 
 
     uint8_t* data = malloc(byte_size);
     memcpy(data, code_output.array, byte_size);
-    /*uint8_t* data_ptr = data;
-    for(size_t n = 0; n < code_output.len; n++) {
-        memcpy(data_ptr, code_output.array[n].array, code_output.array[n].cursor);
-        data_ptr += code_output.array[n].cursor;
-    }*/
 
     const uint64_t code_load_addr = 0x400000;
     const uint64_t str_consts_load_addr = 0x800000;
@@ -1077,25 +1063,26 @@ void process(const StringView* input, StringView* current_source_file, const cha
         exit(1);
     }
 
-    FR_register_function(&functions_registry, (Function) {
-        .name = SV_from_string_len("__rt_exception__zero_div", 24),
-        .offset = sizeof(entry_point),
-        .code_size = sizeof(rt_zero_div_handler),
-        .returns_value = false,
-        .arg_count = 0,
-    });
+
+    FR_register_function(&functions_registry, (Function){
+                             .name = SV_from_string_len("__rt_exception__zero_div", 24),
+                             .offset = sizeof(entry_point),
+                             .code_size = sizeof(rt_zero_div_handler),
+                             .returns_value = false,
+                             .arg_count = 0,
+                         });
 
     resolve_function_calls(data, code_load_addr, &functions_registry, &function_patch_list);
     FunctionsRegistry new_fr = FR_new();
-    FR_register_function(&new_fr, (Function) {
-        .name = SV_from_string_len("_start", 6),
-        .offset = 0,
-        .code_size = sizeof(entry_point),
-        .returns_value = false,
-        .arg_count = 0,
-    });
+    FR_register_function(&new_fr, (Function){
+                             .name = SV_from_string_len("_start", 6),
+                             .offset = 0,
+                             .code_size = sizeof(entry_point),
+                             .returns_value = false,
+                             .arg_count = 0,
+                         });
 
-    for (size_t n=0; n<functions_registry.len; n++) {
+    for (size_t n = 0; n < functions_registry.len; n++) {
         FR_register_function(&new_fr, functions_registry.array[n]);
     }
 
@@ -1111,7 +1098,172 @@ void process(const StringView* input, StringView* current_source_file, const cha
     FR_free(&new_fr);
     FCPL_free(&function_patch_list);
     SVL_p_free(&import_table);
-    for (size_t n=0; n< content_ptrs_len; n++) {
+    for (size_t n = 0; n < content_ptrs_len; n++) {
+        free(content_ptrs[n]);
+    }
+    free(content_ptrs);
+    SVL_p_free(&string_consts);
+    SCARL_free(&string_consts_relocations);
+}
+
+
+
+void process_win64(const StringView* input, StringView* current_source_file, const char* output_filepath) {
+    code_output = BS_new();
+    assert(code_output.array != NULL);
+
+    functions_registry = FR_new();
+    function_patch_list = FCPL_new();
+
+    import_table = SVL_new();
+
+    SVL_p_push(&import_table, *current_source_file);
+
+    content_ptrs = malloc(sizeof(char *) * content_ptrs_cap);
+
+
+    string_consts = SVL_new();
+    string_consts_relocations = SCARL_new();
+
+    const uint64_t code_load_addr = 0x140000000;
+    const uint64_t import_table_load_addr = 0x150000000;
+    const uint64_t str_consts_load_addr = 0x160000000;
+
+
+    StringViewList svl = p_tokenize(input);
+
+    StringViewListView svlv = SVLV_from_SVL(&svl);
+
+    StringViewList importing_funcs = SVL_new();
+    SVL_p_push(&importing_funcs, SV_from_string_len("GetStdHandle", 12));
+    SVL_p_push(&importing_funcs, SV_from_string_len("WriteFile", 9));
+    SVL_p_push(&importing_funcs, SV_from_string_len("ExitProcess", 11));
+
+
+    size_t entry_point_patch_cursor = BS_get_cursor(&code_output) + 1;
+    uint8_t entry_point[] = {
+        0xe8, 0x00, 0x00, 0x00, 0x00, //          call   5 <_main+0x5>
+
+        0x48, 0x83, 0xEC, 0x28, // sub    rsp,0x28
+
+        //0x48, 0xb8, 0x10, 0x00, 0x00, 0x60, 0x01, 0x00, 0x00, 0x00, // movabs rax,0x160000000 + 0x10 for third slot
+        // 0x48, 0xB8, 0x08, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00, 0x00,
+        0x48, 0xB8, 0x10, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00, 0x00,
+        0xB9, 0x00, 0x00, 0x00, 0x00, // mov    ecx,0x0
+        0xFF, 0x10, // call   QWORD PTR [rax]
+        // 0x48, 0x89, 0xc7, //          mov    rdi,rax
+        // 0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00, //         mov    rax,0x3c
+        // 0x0f, 0x05, //                   syscall
+    };
+    BS_write_array(&code_output, sizeof(entry_point), entry_point);
+    FCPL_register_pach(&function_patch_list, (FunctionCallPatch){
+                           .name = SV_from_string_len("main", 4),
+                           .offset = entry_point_patch_cursor,
+                           .relative = true,
+                           .bit_size = 4,
+                       });
+
+    // StringView runtime_error_str = SV_from_string_len("runtime error: ", 15);
+    // size_t runtime_error_str_index = add_str_const(runtime_error_str);
+    //
+    // StringView runtime_error__div_zero_str = SV_from_string_len("division by zero\n", 17);
+    // size_t runtime_error__div_zero_str_index = add_str_const(runtime_error__div_zero_str);
+    //
+    // uint8_t rt_zero_div_handler[] = {
+    //     0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, // mov    rax,0x1
+    //     0x48, 0xc7, 0xc7, 0x01, 0x00, 0x00, 0x00, // mov    rdi,0x1
+    //     0x48, 0xc7, 0xc6, 0x00, 0x00, 0x00, 0x00, // mov    rsi,0x00000000 ; addr
+    //     0x48, 0xc7, 0xc2, (uint8_t) (runtime_error_str.len), 0x00, 0x00, 0x00, // mov    rdx,10 ; len
+    //     0x0f, 0x05, // syscall ; write
+    //
+    //     0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, // mov    rax,0x1
+    //     0x48, 0xc7, 0xc7, 0x01, 0x00, 0x00, 0x00, // mov    rdi,0x1
+    //     0x48, 0xc7, 0xc6, 0x00, 0x00, 0x00, 0x00, // mov    rsi,0x00000000 ; addr
+    //     0x48, 0xc7, 0xc2, (uint8_t) (runtime_error__div_zero_str.len), 0x00, 0x00, 0x00, // mov    rdx,10 ; len
+    //     0x0f, 0x05, // syscall ; write
+    //
+    //     0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00, // mov    rdi, 1 ; exit code
+    //     0x48, 0xC7, 0xC0, 0x3C, 0x00, 0x00, 0x00, // mov    rax, 60 ; exit syscall number
+    //     0x0F, 0x05 // syscall
+    // };
+    // BS_write_array(&code_output, sizeof(rt_zero_div_handler), rt_zero_div_handler);
+    // SCARL_push(&string_consts_relocations, (StringConstAddrRelocation){
+    //                .const_index = runtime_error_str_index,
+    //                .patch_offset = sizeof(entry_point) + 7 + 7 + 3,
+    //                .bit_size = 4,
+    //            });
+    // SCARL_push(&string_consts_relocations, (StringConstAddrRelocation){
+    //                .const_index = runtime_error__div_zero_str_index,
+    //                .patch_offset = sizeof(entry_point) + 7 + 7 + 7 + 7 + 2 + 7 + 7 + 3,
+    //                .bit_size = 4,
+    //            });
+
+
+
+    compile(&svlv, current_source_file, F_Elf64);
+
+    SVL_p_free(&svl);
+
+    size_t byte_size = code_output.len;
+
+
+    uint8_t* data = malloc(byte_size);
+    memcpy(data, code_output.array, byte_size);
+
+
+
+    if (!FR_has_function(&functions_registry, SV_from_string_len("main", 4))) {
+        fprintf(stderr, "[ERROR] no main function found in the program\n");
+        exit(1);
+    }
+    Function main_fn = FR_lookup_function(&functions_registry, SV_from_string_len("main", 4));
+    if (main_fn.arg_count != 0) {
+        fprintf(stderr, "[ERROR] main function should have not arguments, but %i were provided\n", main_fn.arg_count);
+        exit(1);
+    }
+    if (main_fn.returns_value == false) {
+        fprintf(stderr, "[ERROR] main function should return int, but specified in the program as 'void'\n");
+        exit(1);
+    }
+
+
+    FR_register_function(&functions_registry, (Function){
+                             .name = SV_from_string_len("__rt_exception__zero_div", 24),
+                             .offset = sizeof(entry_point),
+                             .code_size = 0, // sizeof(rt_zero_div_handler),
+                             .returns_value = false,
+                             .arg_count = 0,
+                         });
+
+    resolve_function_calls(data, code_load_addr, &functions_registry, &function_patch_list);
+    FunctionsRegistry new_fr = FR_new();
+    FR_register_function(&new_fr, (Function){
+                             .name = SV_from_string_len("_start", 6),
+                             .offset = 0,
+                             .code_size = sizeof(entry_point),
+                             .returns_value = false,
+                             .arg_count = 0,
+                         });
+
+    for (size_t n = 0; n < functions_registry.len; n++) {
+        FR_register_function(&new_fr, functions_registry.array[n]);
+    }
+
+
+    SCARL_resolve(&string_consts_relocations, data, str_consts_load_addr, &string_consts);
+
+    const uint8_t number_of_section = 4;
+
+    write_win64(output_filepath, data, byte_size, code_load_addr, &new_fr, str_consts_load_addr, &string_consts, number_of_section, importing_funcs, import_table_load_addr);
+
+
+    BS_free(&code_output);
+    free(data);
+    FR_free(&functions_registry);
+    FR_free(&new_fr);
+    FCPL_free(&function_patch_list);
+    SVL_p_free(&import_table);
+    for (size_t n = 0; n < content_ptrs_len; n++) {
         free(content_ptrs[n]);
     }
     free(content_ptrs);

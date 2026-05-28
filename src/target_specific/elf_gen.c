@@ -11,7 +11,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#include "compiler.h"
+#include "../compiler.h"
 
 // load address for the executable segment
 // #define LOAD_ADDR 0x400000

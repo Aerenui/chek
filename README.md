@@ -4,6 +4,12 @@ Simple zero-copy single pass full compiler written in C, currently supporting on
 
 Supports only one data type `int` which is 32-bit signed integer. There are **no** string or char literals for now.
 
+```
+48 B8 00 30 00 40 01 00 00 00   ; mov rax, 0x140003000 (Absolute address)
+B9 00 00 00 00                  ; mov ecx, 0
+FF 10                           ; call [rax]
+```
+
 ## syntax
 
 ### entry point
