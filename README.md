@@ -1,13 +1,13 @@
 # Simple compiler In C (attempt.2)
 
-Simple zero-copy single pass full compiler written in C, currently supporting only elf-x86_64 target.
+Simple zero-copy single pass full compiler written in C.
+Supported formats: elf-x86_64 and win64-x86_64.
 
 Supports only one data type `int` which is 32-bit signed integer. There are **no** string or char literals for now.
 
-```
-48 B8 00 30 00 40 01 00 00 00   ; mov rax, 0x140003000 (Absolute address)
-B9 00 00 00 00                  ; mov ecx, 0
-FF 10                           ; call [rax]
+Usage:
+```bash
+scic2 [-o <out>] [-f win64|elf64] <src>
 ```
 
 ## syntax
@@ -23,13 +23,13 @@ end
 Variables are scoped in `if` and `while`. 
 Variables can be declared only inside functions and are per-function valid. 
 Every variable is mutable.
-> int <name>: <expr>;
+> `int <name>: <expr>;`
 ```
 int a: 5*(1+var_b);
 ```
 
 ### changing value of a variable
-> set <name>: <expr>;
+> `set <name>: <expr>;`
 ```
 set a: a * 2 + b;
 ```
@@ -75,7 +75,7 @@ print 97 98; # prints 'ab'
 ```
 
 ### if conditional
-> if <expr> then <stmts> <optional else <stmts>> end
+> `if <expr> then <stmts> <optional else <stmts>> end`
 ```
 if a < 6 then
     ...
@@ -89,7 +89,7 @@ end
 ```
 
 ### while loop
-> while <expr> do <stmts> end
+> `while <expr> do <stmts> end`
 ```
 int a: 0;
 while a < 5 do
@@ -102,7 +102,7 @@ print 10;
 ### function call
 When using `into` to capture returned value, variable needs to be declared beforehand.
 If used without `into` for a function that returns value, warning will be generated.
-> call <name>(<expr>, <expr>, ...) <? or into <var_name>>;
+> `call <name>(<expr>, <expr>, ...) <? or into <var_name>>;`
 ```
 call print_int(97+a);
 int b: 0;
@@ -113,7 +113,7 @@ call greet();
 ### function definition
 Functions can have at most `6` arguments. More arguments are not supported. 
 Void functions do not need return statement at all, but can be used.
-> <int/void> <name>(<arg_name>, <arg_name>, ...) <stmts> end
+> `<int/void> <name>(<arg_name>, <arg_name>, ...) <stmts> end`
 ```
 void greet()
     print 97 98 99 10;
@@ -143,7 +143,7 @@ end
 ### imports
 Include copies over the contents and compiles it before the contents of importer. 
 When the path is relative, it is resolved from the point of the importer's location. 
-> include "<path>";
+> `include "<path>";`
 ```
 include "libs/print_int.cm";
 ```
