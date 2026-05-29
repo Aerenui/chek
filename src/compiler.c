@@ -563,34 +563,65 @@ void get_print_stmt(StringViewListView* view, CompilerTarget target) {
                 break;
             }
             case LOC_VAR: {
-                // // If it's already a variable in memory, you don't need 'push' or 'eax'!
-                // // You can use LEA directly on the variable's memory address.
-                // emit("mov rax, 1");          // sys_write
-                // emit("mov rdi, 1");          // stdout
-                //
-                // // LEA gets the pointer directly to the variable
-                // emit("lea rsi, [rip + %s]", expr.var_name);
-                //
-                // emit("mov rdx, 1");          // 1 byte
-                // emit("syscall");
+                if (target == F_Elf64) {
+                    // 0:  48 c7 c0 01 00 00 00    mov    rax,0x1
+                    // 7:  48 c7 c7 01 00 00 00    mov    rdi,0x1
+                    BS_write_array(&code_output, 14, (uint8_t[]){
+                                       0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00
+                                   });
 
-                // LEA eax, [rbp - offset]
+                    int slot = lookup_var(expr.var);
+                    BS_write(&code_output, 0x48); // REX.W prefix
+                    BS_write(&code_output, 0x8D); // Opcode for LEA
+                    BS_write(&code_output, 0x75); // ModR/M byte for rsi, [rbp + disp8]
+                    BS_write(&code_output, (uint8_t) (-slot)); // 8-bit negative displacement
 
-                // 0:  48 c7 c0 01 00 00 00    mov    rax,0x1
-                // 7:  48 c7 c7 01 00 00 00    mov    rdi,0x1
-                BS_write_array(&code_output, 14, (uint8_t[]){
-                                   0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00
-                               });
+                    // 15: 48 c7 c2 01 00 00 00    mov    rdx,0x1
+                    // 1c: 0f 05                   syscall
+                    BS_write_array(&code_output, 9, (uint8_t[]){0x48, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x0F, 0x05});
+                } else if (target == F_Win64) {
 
-                int slot = lookup_var(expr.var);
-                BS_write(&code_output, 0x48); // REX.W prefix
-                BS_write(&code_output, 0x8D); // Opcode for LEA
-                BS_write(&code_output, 0x75); // ModR/M byte for rsi, [rbp + disp8]
-                BS_write(&code_output, (uint8_t) (-slot)); // 8-bit negative displacement
+                    // 48 83 ec 38             sub    rsp,0x38
+                    BS_write_array(&code_output, 4, (uint8_t[]){0x48, 0x83, 0xEC, 0x38});
 
-                // 15: 48 c7 c2 01 00 00 00    mov    rdx,0x1
-                // 1c: 0f 05                   syscall
-                BS_write_array(&code_output, 9, (uint8_t[]){0x48, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x0F, 0x05});
+                    // BS_write_array(&code_output, 3, (uint8_t[]){0x89, 0x45, (uint8_t) (-offset)});
+                    /*
+                    48 c7 c1 f5 ff ff ff    mov    rcx,0xfffffffffffffff5
+                    48 b8 00 10 00 40 01    movabs rax,0x140001000
+                    00 00 00
+                    ff 10                   call   QWORD PTR [rax]
+                    49 89 c4                mov    r12,rax; get std handle*/
+                    uint8_t get_std_handle[] = { // 0x48, 0x83, 0xC4, 0x38,
+                        0x48, 0xC7, 0xC1, 0xF5, 0xFF, 0xFF, 0xFF, 0x48, 0xB8, 0x00, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00, 0x00, 0xFF, 0x10, 0x49, 0x89, 0xC4,
+                    };
+                    BS_write_array(&code_output, sizeof(get_std_handle), get_std_handle);
+                    /*
+                    48 c7 44 24 20 00 00    mov    QWORD PTR [rsp+0x20],0x0
+                    00 00
+                    4c 8d 4c 24 28          lea    r9,[rsp+0x28]
+                    48 c7 c2 00 00 01 00    mov    rdx,0x10000
+                    49 c7 c0 01 00 00 00    mov    r8,0x1
+                    48 b8 08 10 00 40 01    movabs rax,0x140001008
+                    00 00 00
+                    ff 10                   call   QWORD PTR [rax]
+                     */
+                    int offset = lookup_var(expr.var);
+                    // lea rdx, [rbp - offset]
+                    BS_write(&code_output, 0x48); // REX.W prefix
+                    BS_write(&code_output, 0x8D); // LEA opcode
+                    BS_write(&code_output, 0x55); // ModR/M byte (destination is rdx)
+                    BS_write(&code_output, (uint8_t) (-offset));
+                    uint8_t write_to_std[] = {
+                        0x48, 0xC7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00, 0x4C, 0x8D, 0x4C, 0x24, 0x28, 0x4c, 0x89, 0xe1,
+                        // 0x48, 0xC7, 0xC2, 0x00, 0x00, 0x01, 0x00, // val - mov    rdx,0x10000
+
+                        0x49, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xB8, 0x08, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00, 0x00, 0xFF, 0x10
+                    };
+                    BS_write_array(&code_output, sizeof(write_to_std), write_to_std);
+
+                    // 48 83 c4 38             add    rsp,0x38
+                    BS_write_array(&code_output, 4, (uint8_t[]){0x48, 0x83, 0xC4, 0x38,});
+                }
                 break;
             }
         }
