@@ -28,7 +28,7 @@ char* * content_ptrs;
 size_t content_ptrs_len = 0;
 size_t content_ptrs_cap = 4;
 
-void get_stmt(StringViewListView*, bool);
+void get_stmt(StringViewListView*, bool, CompilerTarget);
 
 bool is_operator(char);
 
@@ -246,14 +246,14 @@ void get_return_stmt(StringViewListView* view, bool should_return_value) {
 }
 
 
-void get_stmt_block(StringViewListView* view, bool should_return_value) {
+void get_stmt_block(StringViewListView* view, bool should_return_value, CompilerTarget target) {
     while (view->len > 0) {
         if (is_stmt_next_return(view)) {
             get_return_stmt(view, should_return_value);
             return;
         }
         if (!is_stmt_next(view)) break;
-        get_stmt(view, should_return_value);
+        get_stmt(view, should_return_value, target);
     }
 }
 
@@ -346,7 +346,7 @@ void get_int_var_set(StringViewListView* view) {
     }
 }*/
 
-void get_if_conditional(StringViewListView* view, bool should_return_value) {
+void get_if_conditional(StringViewListView* view, bool should_return_value, CompilerTarget target) {
     const Loc cond = get_int_expr(view);
 
     StringView then = SVLV_consume_one(view);
@@ -378,7 +378,7 @@ void get_if_conditional(StringViewListView* view, bool should_return_value) {
     int frame_mext_offset_snapshot = get_frame()->next_offset;
     size_t var_tale_length_snapshot = var_table_length;
 
-    get_stmt_block(view, should_return_value);
+    get_stmt_block(view, should_return_value, target);
 
     StringView else_keyword = SVLV_inspect_back(view);
     if (SV__pv_cmp_eq(&else_keyword, "else", 4)) {
@@ -400,7 +400,7 @@ void get_if_conditional(StringViewListView* view, bool should_return_value) {
         // define else_<id>
         LL_push(&labels, (Label){.offset = BS_get_cursor(&code_output), .id = id, .kind = REL_ELSE});
 
-        get_stmt_block(view, should_return_value);
+        get_stmt_block(view, should_return_value, target);
     } else {
         // no else — JE jumps directly to end, define else_<id> here as same as end
         LL_push(&labels, (Label){.offset = BS_get_cursor(&code_output), .id = id, .kind = REL_ELSE});
@@ -420,7 +420,7 @@ void get_if_conditional(StringViewListView* view, bool should_return_value) {
     var_table_length = var_tale_length_snapshot;
 }
 
-void get_while_conditional(StringViewListView* view, bool should_return_value) {
+void get_while_conditional(StringViewListView* view, bool should_return_value, CompilerTarget target) {
     const size_t id = label_cnt++;
 
     // define loop_<id> (loop back target)
@@ -453,7 +453,7 @@ void get_while_conditional(StringViewListView* view, bool should_return_value) {
             });
 
     // body
-    get_stmt_block(view, should_return_value);
+    get_stmt_block(view, should_return_value, target);
 
     // JMP loop_<id> (placeholder)
     BS_write(&code_output, 0xE9);
@@ -479,7 +479,7 @@ void get_while_conditional(StringViewListView* view, bool should_return_value) {
 }
 
 // messses stack
-void get_print_stmt(StringViewListView* view) {
+void get_print_stmt(StringViewListView* view, CompilerTarget target) {
     while (view->len > 0) {
         StringView inspect = SVLV_inspect_back(view);
         if (inspect.start[0] == ';') {
@@ -501,22 +501,65 @@ void get_print_stmt(StringViewListView* view) {
                 // int offset = frame.next_offset;
                 // frame.next_offset += 4;
 
-                BS_write_array(&code_output, 3, (uint8_t[]){0x89, 0x45, (uint8_t) (-offset)});
 
-                // mov rax, 1  (sys_write)
-                // mov rdi, 1  (stdout)
-                BS_write_array(&code_output, 14, (uint8_t[]){
-                                   0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00
-                               });
+                if (target == F_Elf64) {
+                    BS_write_array(&code_output, 3, (uint8_t[]){0x89, 0x45, (uint8_t) (-offset)});
 
-                // lea rsi, [rbp - offset]
-                BS_write(&code_output, 0x48);
-                BS_write(&code_output, 0x8D);
-                BS_write(&code_output, 0x75);
-                BS_write(&code_output, (uint8_t) (-offset));
+                    // mov rax, 1  (sys_write)
+                    // mov rdi, 1  (stdout)
+                    BS_write_array(&code_output, 14, (uint8_t[]){
+                                       0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00
+                                   });
 
-                // mov rdx, 1  +  syscall
-                BS_write_array(&code_output, 9, (uint8_t[]){0x48, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x0F, 0x05});
+                    // lea rsi, [rbp - offset]
+                    BS_write(&code_output, 0x48);
+                    BS_write(&code_output, 0x8D);
+                    BS_write(&code_output, 0x75);
+                    BS_write(&code_output, (uint8_t) (-offset));
+
+                    // mov rdx, 1  +  syscall
+                    BS_write_array(&code_output, 9, (uint8_t[]){0x48, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x0F, 0x05});
+                } else if (target == F_Win64) {
+                    // 48 83 ec 38             sub    rsp,0x38
+                    BS_write_array(&code_output, 4, (uint8_t[]){0x48, 0x83, 0xEC, 0x38});
+
+                    BS_write_array(&code_output, 3, (uint8_t[]){0x89, 0x45, (uint8_t) (-offset)});
+                    /*
+                    48 c7 c1 f5 ff ff ff    mov    rcx,0xfffffffffffffff5
+                    48 b8 00 10 00 40 01    movabs rax,0x140001000
+                    00 00 00
+                    ff 10                   call   QWORD PTR [rax]
+                    49 89 c4                mov    r12,rax; get std handle*/
+                    uint8_t get_std_handle[] = { // 0x48, 0x83, 0xC4, 0x38,
+                        0x48, 0xC7, 0xC1, 0xF5, 0xFF, 0xFF, 0xFF, 0x48, 0xB8, 0x00, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00, 0x00, 0xFF, 0x10, 0x49, 0x89, 0xC4,
+                    };
+                    BS_write_array(&code_output, sizeof(get_std_handle), get_std_handle);
+                    /*
+                    48 c7 44 24 20 00 00    mov    QWORD PTR [rsp+0x20],0x0
+                    00 00
+                    4c 8d 4c 24 28          lea    r9,[rsp+0x28]
+                    48 c7 c2 00 00 01 00    mov    rdx,0x10000
+                    49 c7 c0 01 00 00 00    mov    r8,0x1
+                    48 b8 08 10 00 40 01    movabs rax,0x140001008
+                    00 00 00
+                    ff 10                   call   QWORD PTR [rax]
+                     */
+                    // lea rdx, [rbp - offset]
+                    BS_write(&code_output, 0x48); // REX.W prefix
+                    BS_write(&code_output, 0x8D); // LEA opcode
+                    BS_write(&code_output, 0x55); // ModR/M byte (destination is rdx)
+                    BS_write(&code_output, (uint8_t) (-offset));
+                    uint8_t write_to_std[] = {
+                        0x48, 0xC7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00, 0x4C, 0x8D, 0x4C, 0x24, 0x28, 0x4c, 0x89, 0xe1,
+                        // 0x48, 0xC7, 0xC2, 0x00, 0x00, 0x01, 0x00, // val - mov    rdx,0x10000
+
+                        0x49, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xB8, 0x08, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00, 0x00, 0xFF, 0x10
+                    };
+                    BS_write_array(&code_output, sizeof(write_to_std), write_to_std);
+
+                    // 48 83 c4 38             add    rsp,0x38
+                    BS_write_array(&code_output, 4, (uint8_t[]){0x48, 0x83, 0xC4, 0x38,});
+                }
                 break;
             }
             case LOC_VAR: {
@@ -687,18 +730,18 @@ void get_function_call_stmt(StringViewListView* view) {
     }
 }
 
-void get_stmt(StringViewListView* view, bool should_return_value) {
+void get_stmt(StringViewListView* view, bool should_return_value, CompilerTarget target) {
     StringView s1 = SVLV_consume_one(view);
     if (SV__pv_cmp_eq(&s1, "int", 3)) {
         get_int_var_dec(view);
     } else if (SV__pv_cmp_eq(&s1, "set", 3)) {
         get_int_var_set(view);
     } else if (SV__pv_cmp_eq(&s1, "if", 2)) {
-        get_if_conditional(view, should_return_value);
+        get_if_conditional(view, should_return_value, target);
     } else if (SV__pv_cmp_eq(&s1, "while", 5)) {
-        get_while_conditional(view, should_return_value);
+        get_while_conditional(view, should_return_value, target);
     } else if (SV__pv_cmp_eq(&s1, "print", 5)) {
-        get_print_stmt(view);
+        get_print_stmt(view, target);
     } else if (SV__pv_cmp_eq(&s1, "call", 4)) {
         get_function_call_stmt(view);
     } else {
@@ -706,7 +749,7 @@ void get_stmt(StringViewListView* view, bool should_return_value) {
     }
 }
 
-void get_function(StringViewListView* view) {
+void get_function(StringViewListView* view, CompilerTarget target) {
     size_t f_start_cursor = BS_get_cursor(&code_output);
 
     create_frame();
@@ -791,7 +834,7 @@ void get_function(StringViewListView* view) {
     SVL_p_free(&f_args);
 
 
-    get_stmt_block(view, returns_value);
+    get_stmt_block(view, returns_value, target);
 
 
     StringView f_end = SVLV_consume_one(view);
@@ -940,7 +983,7 @@ void compile(StringViewListView* list, StringView* current_source_file, Compiler
         resolve_import(list, current_source_file, target);
     }
     while (list->len > 0) {
-        get_function(list);
+        get_function(list, target);
     }
 }
 
@@ -1148,9 +1191,11 @@ void process_win64(const StringView* input, StringView* current_source_file, con
 
         //0x48, 0xb8, 0x10, 0x00, 0x00, 0x60, 0x01, 0x00, 0x00, 0x00, // movabs rax,0x160000000 + 0x10 for third slot
         // 0x48, 0xB8, 0x08, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00, 0x00,
+
         0x48, 0xB8, 0x10, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00, 0x00,
         0xB9, 0x00, 0x00, 0x00, 0x00, // mov    ecx,0x0
         0xFF, 0x10, // call   QWORD PTR [rax]
+
         // 0x48, 0x89, 0xc7, //          mov    rdi,rax
         // 0x48, 0xc7, 0xc0, 0x3c, 0x00, 0x00, 0x00, //         mov    rax,0x3c
         // 0x0f, 0x05, //                   syscall
@@ -1200,7 +1245,7 @@ void process_win64(const StringView* input, StringView* current_source_file, con
 
 
 
-    compile(&svlv, current_source_file, F_Elf64);
+    compile(&svlv, current_source_file, F_Win64);
 
     SVL_p_free(&svl);
 
