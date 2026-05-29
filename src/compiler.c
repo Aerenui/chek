@@ -1328,7 +1328,7 @@ void process_win64(const StringView* input, StringView* current_source_file, con
 
     SCARL_resolve(&string_consts_relocations, data, str_consts_load_addr, &string_consts);
 
-    const uint8_t number_of_section = 4;
+    const uint8_t number_of_section = 3; // 4 - .bss
 
     write_win64(output_filepath, data, byte_size, code_load_addr, &new_fr, str_consts_load_addr, &string_consts, number_of_section, importing_funcs, import_table_load_addr);
 

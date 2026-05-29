@@ -291,7 +291,7 @@ void write_win64(const char* path,
     write32(f, align_to(headers_sz, FILE_ALIGN)); /* SizeOfHeaders */
     write32(f, 0); /* Checksum */
     write16(f, 3); /* Subsystem: Console */
-    write16(f, 0); /* DllCharacteristics */
+    write16(f, 0x0100); /* DllCharacteristics */
     write64(f, 0x100000); /* SizeOfStackReserve */
     write64(f, 0x1000);   /* SizeOfStackCommit */
     write64(f, 0x100000); /* SizeOfHeapReserve */
@@ -409,6 +409,16 @@ void write_win64(const char* path,
     write32(f, 0x40000040); /* INITIALIZED_DATA | READ */
 
 
+    // write_name8(f, ".bss");
+    // write32(f, bss_sz);
+    // write32(f, bss_rva);
+    // write32(f, 0);          /* SizeOfRawData = 0 for BSS */
+    // write32(f, 0);          /* PointerToRawData = 0 */
+    // write32(f, 0); write32(f, 0);
+    // write16(f, 0); write16(f, 0);
+    // write32(f, 0xC0000080); /* UNINITIALIZED_DATA | READ | WRITE */
+
+
 
 
 
@@ -422,14 +432,7 @@ void write_win64(const char* path,
         nt_offset += (uint32_t)esz;
     }
 
-    /* --- .text --- */
-    fseek(f, text_offset, SEEK_SET);
-    fwrite(code, 1, code_len, f);
-
-    /* --- .rdata --- */
-    fseek(f, rdata_offset, SEEK_SET);
-    fwrite(string_consts_array, 1, string_consts_size, f);
-
+    // printf("idata_offset = 0x%x\n", idata_offset);
     /* --- .idata --- */
     fseek(f, idata_offset, SEEK_SET);
 
@@ -463,6 +466,20 @@ void write_win64(const char* path,
 
     /* DLL name */
     fwrite("KERNEL32.DLL\0\0\0", 1, dll_name_sz, f);
+
+
+    // printf("text_offset = 0x%x\n", text_offset);
+    /* --- .text --- */
+    fseek(f, text_offset, SEEK_SET);
+    fwrite(code, 1, code_len, f);
+
+    // printf("rdata_offset = 0x%x\n", rdata_offset);
+    /* --- .rdata --- */
+    fseek(f, rdata_offset, SEEK_SET);
+    fwrite(string_consts_array, 1, string_consts_size, f);
+
+    fseek(f, rdata_offset+0x512, SEEK_SET);
+    write8(f, 0);
 
     free(hint_name_rvas);
     free(string_consts_array);
