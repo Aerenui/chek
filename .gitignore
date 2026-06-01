@@ -12,3 +12,6 @@ Makefile
 /.cmake
 
 out
+out.exe
+*.zip
+/cmake-windows-build

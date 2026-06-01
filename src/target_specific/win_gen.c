@@ -53,12 +53,6 @@ void write_win64(const char* path,
 
 
 
-
-    // StringViewList importing_funcs = SVL_new();
-    // SVL_p_push(&importing_funcs, SV_from_string_len("GetStdHandle", 12));
-    // SVL_p_push(&importing_funcs, SV_from_string_len("WriteFile", 9));
-    // SVL_p_push(&importing_funcs, SV_from_string_len("ExitProcess", 11));
-
     size_t name_table_sz = 0;
     for (size_t i = 0; i < importing_funcs.len; i++) {
         size_t entry_sz = 2 + importing_funcs.array[i].len + 1; // hint + name + null
@@ -156,69 +150,6 @@ void write_win64(const char* path,
     write16(f, 240); /* CHANGE: SizeOfOptionalHeader: PE32+ uses 240 bytes (was 224) */
     write16(f, 0x0022); /* CHANGE: Characteristics: Executable, Large Address Aware (was 0x103) */
 
-
-    // uint32_t headers_sz = pe_offset + PE_HDR_SZ + num_sections * SEC_HDR_SZ;
-    //
-    // uint32_t idata_rva    = align_to(headers_sz, SEC_ALIGN);
-    // uint32_t idata_offset = align_to(headers_sz, FILE_ALIGN);
-    // // idata_sz computed after you know your imports
-    //
-    // uint32_t rdata_rva    = align_to(idata_rva + idata_sz, SEC_ALIGN);
-    // uint32_t rdata_offset = align_to(idata_offset + idata_sz, FILE_ALIGN);
-    // uint32_t rdata_sz     = string_consts_size;
-    //
-    // uint32_t text_rva    = align_to(rdata_rva + rdata_sz, SEC_ALIGN);
-    // uint32_t text_offset = align_to(rdata_offset + rdata_sz, FILE_ALIGN);
-    // uint32_t text_sz     = code_len;
-    //
-    //
-    //
-    // uint32_t iat_rva             = idata_rva;
-    // uint32_t iat_sz              = (num_imports + 1) * IAT_ENTRY_SZ;
-    // uint32_t import_dir_table_rva = iat_rva + iat_sz;
-    // uint32_t import_dir_table_sz  = 2 * IMPORT_DIR_ENTRY_SZ;
-    // uint32_t import_lookup_table_rva = import_dir_table_rva + import_dir_table_sz;
-    // uint32_t name_table_rva      = import_lookup_table_rva + (num_imports + 1) * IMPORT_LOOKUP_TBL_ENTRY_SZ;
-    // uint32_t dll_name_rva        = name_table_rva + name_table_sz;
-    // uint32_t dll_name_sz         = 16; /* "KERNEL32.DLL\0" = 13 bytes, padded to 16 */
-    // uint32_t idata_sz            = dll_name_rva + dll_name_sz - idata_rva;
-    //
-    // uint32_t bss_rva = align_to(idata_rva + idata_sz, SEC_ALIGN);
-    // uint32_t bss_sz  = 0;// 4096;
-
-    // uint64_t image_base = 0x140000000;
-    //
-    // uint32_t text_rva     = (uint32_t)(load_addr - image_base);
-    // uint32_t rdata_rva    = (uint32_t)(str_consts_load_addr - image_base);
-    // uint32_t idata_rva    = (uint32_t)(import_table_load_addr - image_base);
-    //
-    // uint32_t headers_sz = pe_offset + PE_HDR_SZ + num_sections * SEC_HDR_SZ;
-    //
-    // // uint32_t idata_rva    = import_table_load_addr; // align_to(headers_sz, SEC_ALIGN);
-    // uint32_t idata_offset = align_to(headers_sz, FILE_ALIGN);
-    //
-    // // compute idata layout first
-    // uint32_t iat_rva                 = idata_rva;
-    // uint32_t iat_sz                  = (num_imports + 1) * IAT_ENTRY_SZ;
-    // uint32_t import_dir_table_rva    = iat_rva + iat_sz;
-    // uint32_t import_dir_table_sz     = 2 * IMPORT_DIR_ENTRY_SZ;
-    // uint32_t import_lookup_table_rva = import_dir_table_rva + import_dir_table_sz;
-    // uint32_t name_table_rva          = import_lookup_table_rva + (num_imports + 1) * IMPORT_LOOKUP_TBL_ENTRY_SZ;
-    // uint32_t dll_name_sz             = 16;
-    // uint32_t dll_name_rva            = name_table_rva + name_table_sz;
-    // uint32_t idata_sz                = dll_name_rva + dll_name_sz - idata_rva;
-    //
-    // // now rdata and text can follow
-    // // uint32_t rdata_rva    = str_consts_load_addr; //align_to(idata_rva + idata_sz, SEC_ALIGN);
-    // uint32_t rdata_offset = align_to(idata_offset + idata_sz, FILE_ALIGN);
-    // uint32_t rdata_sz     = string_consts_size;
-    //
-    // // uint32_t text_rva    =  load_addr; // align_to(rdata_rva + rdata_sz, SEC_ALIGN);
-    // uint32_t text_offset = align_to(rdata_offset + rdata_sz, FILE_ALIGN);
-    // uint32_t text_sz     = code_len;
-    //
-    // uint32_t bss_rva = align_to(text_rva + text_sz, SEC_ALIGN);
-    // uint32_t bss_sz  = 0;
 
     uint32_t import_dir_table_sz = 2 * IMPORT_DIR_ENTRY_SZ;
 
@@ -337,45 +268,6 @@ void write_win64(const char* path,
 
 
 
-
-    // /* --- Section headers (PE IMAGE_SECTION_HEADER, 40 bytes each) --- */
-    //
-    // write_name8(f, ".text");
-    // write32(f, text_sz);
-    // write32(f, text_rva);
-    // write32(f, align_to(text_sz, FILE_ALIGN));
-    // write32(f, text_offset);
-    // write32(f, 0); write32(f, 0);
-    // write16(f, 0); write16(f, 0);
-    // write32(f, 0x60000020); /* CODE | EXECUTE | READ */
-    //
-    // write_name8(f, ".rdata");
-    // write32(f, rdata_sz);
-    // write32(f, rdata_rva);
-    // write32(f, align_to(rdata_sz, FILE_ALIGN));
-    // write32(f, rdata_offset);
-    // write32(f, 0); write32(f, 0);
-    // write16(f, 0); write16(f, 0);
-    // write32(f, 0x40000040); /* INITIALIZED_DATA | READ */
-    //
-    // write_name8(f, ".idata");
-    // write32(f, idata_sz);
-    // write32(f, idata_rva);
-    // write32(f, align_to(idata_sz, FILE_ALIGN));
-    // write32(f, idata_offset);
-    // write32(f, 0); write32(f, 0);
-    // write16(f, 0); write16(f, 0);
-    // write32(f, 0xC0000040); /* INITIALIZED_DATA | READ | WRITE */
-    //
-    // write_name8(f, ".bss");
-    // write32(f, bss_sz);
-    // write32(f, bss_rva);
-    // write32(f, 0);          /* SizeOfRawData = 0 for BSS */
-    // write32(f, 0);          /* PointerToRawData = 0 */
-    // write32(f, 0); write32(f, 0);
-    // write16(f, 0); write16(f, 0);
-    // write32(f, 0xC0000080); /* UNINITIALIZED_DATA | READ | WRITE */
-
     /* --- Section headers (PE IMAGE_SECTION_HEADER, 40 bytes each) --- */
 
     // 1. .idata is now first
@@ -478,8 +370,55 @@ void write_win64(const char* path,
     fseek(f, rdata_offset, SEEK_SET);
     fwrite(string_consts_array, 1, string_consts_size, f);
 
-    fseek(f, rdata_offset+0x512, SEEK_SET);
-    write8(f, 0);
+    // fseek(f, rdata_offset+0x512, SEEK_SET);
+    // write8(f, 0);
+
+
+
+    // After all section data is written, record the offset
+    uint32_t symtab_offset = align_to(rdata_offset + align_to(rdata_sz, FILE_ALIGN), FILE_ALIGN);
+    uint32_t num_symbols = fr->len;
+
+    // Build string table
+    size_t strtab_len = 4; // first 4 bytes = size field itself
+    for (size_t n = 0; n < fr->len; n++)
+        strtab_len += fr->array[n].name.len + 1;
+
+    uint8_t* strtab = calloc(1, strtab_len);
+    *(uint32_t*)strtab = (uint32_t)strtab_len; // first 4 bytes = total size
+
+    // Write symbol table
+    fseek(f, symtab_offset, SEEK_SET);
+
+    size_t strtab_cur = 4; // start after size field
+    for (size_t n = 0; n < fr->len; n++) {
+        // Name: zero + 4-byte offset into string table
+        write32(f, 0);
+        write32(f, (uint32_t)strtab_cur);
+
+        write32(f, (uint32_t)(fr->array[n].offset)); // Value: RVA within .text
+        write16(f, 2);    // SectionNumber: .text is section 2 in your layout
+        write16(f, 0x20); // Type: function
+        write8(f,  0x02); // StorageClass: IMAGE_SYM_CLASS_EXTERNAL
+        write8(f,  0x00); // NumberOfAuxSymbols
+
+        memcpy(strtab + strtab_cur, fr->array[n].name.start, fr->array[n].name.len);
+        strtab_cur += fr->array[n].name.len + 1;
+    }
+
+    // Write string table immediately after symbol table
+    fwrite(strtab, 1, strtab_len, f);
+    free(strtab);
+
+
+    fseek(f, pe_offset + 4 + 8, SEEK_SET); // skip "PE\0\0" + Machine + NumberOfSections + TimeDateStamp
+    fseek(f, pe_offset + 4 + 8, SEEK_SET);
+    // PointerToSymbolTable is at pe_offset + 4 (sig) + 2+2+4 (machine+numsec+timestamp) = pe_offset + 12
+    fseek(f, pe_offset + 12, SEEK_SET);
+    write32(f, symtab_offset);
+    write32(f, num_symbols);
+
+
 
     free(hint_name_rvas);
     free(string_consts_array);

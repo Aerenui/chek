@@ -1,0 +1,32 @@
+include "libs/print_int.cm";
+
+
+int fib(n)
+	if n < 2 then
+		return 1;
+	end
+
+	int a: 0;
+	int b: 0;
+	call fib(n-1) into a;
+	call fib(n-2) into b;
+	return a + b;
+end
+
+
+int main()
+
+	int n: 0;
+	while n < 15 do
+		int rs: 0;
+		call fib(n) into rs;
+	
+		call print_int(rs);
+		print 32;
+
+		set n: n+1;
+	end
+	print 10;
+
+	return 0;
+end

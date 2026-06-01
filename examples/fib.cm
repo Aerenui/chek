@@ -1,13 +1,4 @@
-int print_int(n)
-    int q: n / 10;
-    int d: n % 10;
-    int c: d + 48;
-    if 0 < q then
-        call print_int(q) into q;
-    end
-    print c;
-    return 0;
-end
+include "libs/print_int.cm";
 
 void fib(n)
     int a: 0;

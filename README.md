@@ -10,6 +10,37 @@ Usage:
 scic2 [-o <out>] [-f win64|elf64] <src>
 ```
 
+## building from source (linux)
+
+### debug build
+```bash
+# initialize cmake with debug
+cmake . -DCMAKE_BUILD_TYPE=Debug
+
+# build the compiler
+cmake --build .
+```
+
+### release build
+```bash
+# initialize cmake in release
+cmake . -DCMAKE_BUILD_TYPE=Release
+
+# build the compiler
+cmake --build .
+```
+
+## building from source (for windows)
+
+```bash
+mkdir cmake-windows-build
+cd cmake-windows-build
+
+cmake -DCMAKE_TOOLCHAIN_FILE=../cross-windows.cmake ..
+
+cmake --build .
+```
+
 ## syntax
 
 ### entry point

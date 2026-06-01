@@ -4,7 +4,18 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <linux/limits.h>
+// #include <linux/limits.h>
+#include <limits.h>
+#ifndef PATH_MAX
+  #define PATH_MAX 260
+#endif
+
+#if defined(_WIN32) || defined(__MINGW32__)
+  #include <stdlib.h>
+  #define realpath(rel, abs) _fullpath((abs), (rel), PATH_MAX)
+#else
+  #include <stdlib.h>
+#endif
 
 #include "target_specific/elf_gen.h"
 #include "expr.h"

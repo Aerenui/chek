@@ -19,7 +19,7 @@ int add(var_a, var_b)
     return var_a + var_b;
 end
 
-void main()
+int main()
     int a: 1;
     print 64 10;
     call abc();
@@ -29,6 +29,8 @@ void main()
     call add(90, 7) into c;
     print c;
     print 10;
+
+    return 0;
 end
 
 

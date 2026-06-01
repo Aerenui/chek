@@ -5,7 +5,8 @@
 #include "elf_gen.h"
 
 
-#include <elf.h>
+// #include <elf.h>
+#include "elf.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>

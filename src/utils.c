@@ -8,6 +8,13 @@
 #include <stdlib.h>
 
 
+#if defined(_WIN32) || defined(__MINGW32__)
+  #include <stdlib.h>
+  #define realpath(rel, abs) _fullpath((abs), (rel), PATH_MAX)
+#else
+  #include <stdlib.h>
+#endif
+
 char *read_file(const char *path, size_t *out_len) {
     FILE *f = fopen(path, "rb");
     if (!f) {

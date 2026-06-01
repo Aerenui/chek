@@ -1,7 +1,18 @@
 #include "main.h"
 #include <stdint.h>
 #include <stdio.h>
-#include <linux/limits.h>
+// #include <linux/limits.h>
+#include <limits.h>
+#ifndef PATH_MAX
+  #define PATH_MAX 260
+#endif
+
+#if defined(_WIN32) || defined(__MINGW32__)
+  #include <stdlib.h>
+  #define realpath(rel, abs) _fullpath((abs), (rel), PATH_MAX)
+#else
+  #include <stdlib.h>
+#endif
 
 #include "utils.h"
 #include "compiler.h"
@@ -12,7 +23,18 @@ int main(int argc, char* argv[]) {
     StringViewList args = SVL_from_args(argc, argv);
 
     const char* output_name = "out"; // default
-    CompilerTarget format = F_Machine;       // default: unset
+#if defined(_WIN64)
+    CompilerTarget target = F_Win64;
+    bool has_target_default = true;
+#elif defined(__ELF__)
+    CompilerTarget target = F_Elf64;
+    bool has_target_default = true;
+#else
+    CompilerTarget target = F_Elf64;
+    bool has_target_default = true;
+#endif
+    bool target_set = false;
+
     StringView input_src_path = {0};
 
     size_t i = 1;
@@ -34,15 +56,16 @@ int main(int argc, char* argv[]) {
             }
             StringView fmt = args.array[i + 1];
             if (SV__pv_cmp_eq(&fmt, "win64", 5)) {
-                format = F_Win64;
+                target = F_Win64;
             } else if (SV__pv_cmp_eq(&fmt, "elf64", 5)) {
-                format = F_Elf64;
+                target = F_Elf64;
             } else {
                 fprintf(stderr, "[ERROR] -f: unknown format '%.*s' (expected win64 or elf64)\n",
                         (int)fmt.len, fmt.start);
                 SVL_p_free(&args);
                 return 1;
             }
+            target_set = true;
             i += 2;
         } else {
             input_src_path = arg;
@@ -58,16 +81,13 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (format == F_Machine) {
-        #if defined(_WIN64)
-            format = F_Win64;
-        #elif defined(__ELF__)
-            format = F_Elf64;
-        #else
-            fprintf(stderr, "[ERROR] unrecognized system format, specify format manualy\n");
-            exit(1);
-        #endif
+    // ReSharper disable once CppDFAConstantConditions
+    if (!target_set && !has_target_default) {
+        fprintf(stderr, "[ERROR] target not set or derrived from system, please specify target manually\n");
+        exit(1);
     }
+
+
 
     size_t file_size;
     char* content = read_file(input_src_path.start, &file_size);
@@ -85,7 +105,7 @@ int main(int argc, char* argv[]) {
 
     StringView full_path = SV_from_string(resolved_path_raw);
 
-    process(&src_contents, &full_path, output_name, format);
+    process(&src_contents, &full_path, output_name, target);
 
     free(content);
 
