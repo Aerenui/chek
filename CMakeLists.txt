@@ -26,6 +26,7 @@ if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_C_COMPILER_ID MATCHES "Clang")
             -Wno-error=unused-variable
             -Wno-error=unused-parameter
             -Wno-error=unused-local-typedefs
+            -Wno-error=unused-result
     )
 
     target_compile_options(main PRIVATE
