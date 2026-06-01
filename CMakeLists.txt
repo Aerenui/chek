@@ -38,8 +38,9 @@ endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     find_library(MIMALLOC_STATIC
-            NAMES libmimalloc.a mimalloc
-            HINTS /usr/lib /usr/local/lib
+            NAMES libmimalloc.a
+#            NAMES libmimalloc.a mimalloc
+#            HINTS /usr/lib /usr/local/lib
     )
     if(MIMALLOC_STATIC)
         message(STATUS "mimalloc found: ${MIMALLOC_STATIC}")
