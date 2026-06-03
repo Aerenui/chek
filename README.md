@@ -67,14 +67,20 @@ set a: a * 2 + b;
 
 ### variable shadowing
 Variables declared inside `if` or `while` overshadow variables declared in outer scope.
+Variables declared inside function overshadow global variables.
 ```
-int var: 5;
-call print_int(var); print 10; # prints 5
-if 1 then
-    int var: 10;
-    call print_int(var); print 10; # prints 10
+global int var: 1;
+int main()
+    call print_int(var); print 10; # prints 1
+
+    int var: 5;
+    call print_int(var); print 10; # prints 5
+    if 1 then
+        int var: 10;
+        call print_int(var); print 10; # prints 10
+    end
+    call print_int(var); print 10; # prints 5
 end
-call print_int(var); print 10; # prints 5
 ```
 
 ### expressions
@@ -171,6 +177,17 @@ int fac(n)
 end
 ```
 
+### global variables
+> `global <type> <name>: <expr>;`
+```
+global int a: 10;
+global int b: a + 5;
+
+int main()
+    set a: a - 5;
+    return a + b;
+end
+```
 ### imports
 Include copies over the contents and compiles it before the contents of importer. 
 When the path is relative, it is resolved from the point of the importer's location. 

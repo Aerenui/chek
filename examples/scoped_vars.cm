@@ -1,11 +1,23 @@
 include "libs/print_int.cm";
 
+global int var: 1;
+
 int main()
-    int var: 5;
+    # prints 1
     call print_int(var); print 10;
-    if 1 < 2 then
+
+    int var: 5;
+
+    # prints 5
+    call print_int(var); print 10;
+
+    if 1 then
         int var: 10;
+
+        # prints 10
         call print_int(var); print 10;
     end
+
+    # prints 5
     call print_int(var); print 10;
 end
