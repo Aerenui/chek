@@ -48,7 +48,7 @@ int main(int argc, char* argv[]) {
             }
             output_name = args.array[i + 1].start;
             i += 2;
-        } else if (SV__pv_cmp_eq(&arg, "-f", 2)) {
+        } else if (SV__pv_cmp_eq(&arg, "-t", 2)) {
             if (i + 1 >= args.len) {
                 fprintf(stderr, "[ERROR] -f requires an argument\n");
                 SVL_p_free(&args);
@@ -60,7 +60,7 @@ int main(int argc, char* argv[]) {
             } else if (SV__pv_cmp_eq(&fmt, "elf64", 5)) {
                 target = F_Elf64;
             } else {
-                fprintf(stderr, "[ERROR] -f: unknown format '%.*s' (expected win64 or elf64)\n",
+                fprintf(stderr, "[ERROR] -f: unknown target '%.*s' (expected win64 or elf64)\n",
                         (int)fmt.len, fmt.start);
                 SVL_p_free(&args);
                 return 1;
@@ -75,7 +75,7 @@ int main(int argc, char* argv[]) {
 
     if (input_src_path.start == NULL) {
         fprintf(stderr, "[ERROR] expected one argument\n");
-        printf("[USAGE] %.*s [-o <out>] [-f win64|elf64] <src>\n",
+        printf("[USAGE] %.*s [-o <out>] [-t win64|elf64] <src>\n",
                (int)args.array[0].len, args.array[0].start);
         SVL_p_free(&args);
         return 1;
@@ -83,7 +83,7 @@ int main(int argc, char* argv[]) {
 
     // ReSharper disable once CppDFAConstantConditions
     if (!target_set && !has_target_default) {
-        fprintf(stderr, "[ERROR] target not set or derrived from system, please specify target manually\n");
+        fprintf(stderr, "[ERROR] target not set or derived from system, please specify target manually\n");
         exit(1);
     }
 

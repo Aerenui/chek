@@ -155,62 +155,238 @@ void resolve_relocations(ByteSeg *buf, RelocationList *rels, LabelList *labels) 
 
 // -----------------------------------------------------------------------------------------
 
-void emit_mov_eax(ByteSeg* out, Loc loc) {
-    if (loc.kind == LOC_IMMEDIATE) {
-        // MOV eax, imm32  (B8 id)
-        BS_write(out, 0xB8);
-        BS_write(out, (loc.value >> 0) & 0xFF);
-        BS_write(out, (loc.value >> 8) & 0xFF);
-        BS_write(out, (loc.value >> 16) & 0xFF);
-        BS_write(out, (loc.value >> 24) & 0xFF);
-    } else {
-        // LOC_VAR + LOC_STACK_SLOT
-        // MOV eax, [rbp - offset]
-        int slot = (loc.kind == LOC_VAR) ? lookup_var(loc.var) : loc.offset;
-        BS_write(out, 0x8B);
-        BS_write(out, 0x45);
-        BS_write(out, (uint8_t) (-slot));
+void emit_mov_eax(ByteSeg* out, Loc loc, GlobalPatchList* gpl, CompilerTarget target) {
+    switch (loc.kind) {
+        case LOC_IMMEDIATE:
+            BS_write(out, 0xB8);
+            BS_write(out, (loc.value >>  0) & 0xFF);
+            BS_write(out, (loc.value >>  8) & 0xFF);
+            BS_write(out, (loc.value >> 16) & 0xFF);
+            BS_write(out, (loc.value >> 24) & 0xFF);
+            break;
+        case LOC_VAR:
+        case LOC_STACK_SLOT: {
+            int slot = (loc.kind == LOC_VAR) ? lookup_var(loc.var) : loc.offset;
+            BS_write(out, 0x8B);
+            BS_write(out, 0x45);
+            BS_write(out, (uint8_t)(-slot));
+            break;
+        }
+        case LOC_GLOBAL: {
+            switch (target) {
+                case F_Elf64: {
+                    size_t pos = BS_get_cursor(out) + 3;
+                    BS_write(out, 0x8B);        // MOV eax, [addr32]
+                    BS_write(out, 0x04);
+                    BS_write(out, 0x25);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    GPL_register_patch(gpl, (GlobalPatch){
+                        .index = loc.offset,
+                        .offset = pos,
+                        .bit_size = 4,
+                    });
+                    break;
+                }
+                case F_Win64: {
+                    size_t pos = BS_get_cursor(out) + 2;
+                    BS_write(out, 0x48); BS_write(out, 0xB9);   // MOV rcx, imm64
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x8B); BS_write(out, 0x01);   // MOV eax, [rcx]
+                    GPL_register_patch(gpl, (GlobalPatch){
+                        .index = loc.offset,
+                        .offset = pos,
+                        .bit_size = 8,
+                    });
+                    break;
+                }
+            }
+            break;
+        }
     }
 }
 
-void emit_op_eax(ByteSeg* out, uint8_t opcode, Loc src) {
-    if (src.kind == LOC_IMMEDIATE) {
-        // 81 /0 id  (ADD eax, imm32)  — /0 for ADD, /5 for SUB
-        // but simpler: MOV ecx, imm32 then OP eax, ecx
-        BS_write(out, 0xB9); // MOV ecx, imm32
-        BS_write(out, (src.value >> 0) & 0xFF);
-        BS_write(out, (src.value >> 8) & 0xFF);
-        BS_write(out, (src.value >> 16) & 0xFF);
-        BS_write(out, (src.value >> 24) & 0xFF);
-        BS_write(out, opcode); // ADD/SUB eax, ecx
-        BS_write(out, 0xC1); // ModRM: mod=11, reg=eax(0), rm=ecx(1)
-    } else {
-        // src is in memory [rbp - offset]
-        int slot = (src.kind == LOC_VAR) ? lookup_var(src.var) : src.offset;
-        BS_write(out, opcode); // ADD/SUB eax, [rbp - slot]
-        BS_write(out, 0x45); // ModRM: mod=01, reg=eax(0), rm=rbp(5)
-        BS_write(out, (uint8_t) (-slot));
+void emit_op_eax(ByteSeg* out, uint8_t opcode, Loc src, GlobalPatchList* gpl, CompilerTarget target) {
+    switch (src.kind) {
+        case LOC_IMMEDIATE:
+            BS_write(out, 0xB9);
+            BS_write(out, (src.value >>  0) & 0xFF);
+            BS_write(out, (src.value >>  8) & 0xFF);
+            BS_write(out, (src.value >> 16) & 0xFF);
+            BS_write(out, (src.value >> 24) & 0xFF);
+            BS_write(out, opcode);
+            BS_write(out, 0xC1);
+            break;
+        case LOC_VAR:
+        case LOC_STACK_SLOT: {
+            int slot = (src.kind == LOC_VAR) ? lookup_var(src.var) : src.offset;
+            BS_write(out, opcode);
+            BS_write(out, 0x45);
+            BS_write(out, (uint8_t)(-slot));
+            break;
+        }
+        case LOC_GLOBAL: {
+            switch (target) {
+                case F_Elf64: {
+                    size_t pos = BS_get_cursor(out) + 3;
+                    BS_write(out, 0x8B);        // MOV ecx, [addr32]
+                    BS_write(out, 0x0C);
+                    BS_write(out, 0x25);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    GPL_register_patch(gpl, (GlobalPatch){
+                        .index = src.offset,
+                        .offset = pos,
+                        .bit_size = 4,
+                    });
+                    BS_write(out, opcode);
+                    BS_write(out, 0xC1);        // OP eax, ecx
+                    break;
+                }
+                case F_Win64: {
+                    size_t pos = BS_get_cursor(out) + 2;
+                    BS_write(out, 0x48); BS_write(out, 0xB9);   // MOV rcx, imm64
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x8B); BS_write(out, 0x09);   // MOV ecx, [rcx]
+                    GPL_register_patch(gpl, (GlobalPatch){
+                        .index = src.offset,
+                        .offset = pos,
+                        .bit_size = 8,
+                    });
+                    BS_write(out, opcode);
+                    BS_write(out, 0xC1);        // OP eax, ecx
+                    break;
+                }
+            }
+            break;
+        }
     }
 }
 
-void emit_imul_eax(ByteSeg* out, Loc src) {
-    if (src.kind == LOC_IMMEDIATE) {
-        // IMUL eax, eax, imm32  (6B /r ib for imm8, 69 /r id for imm32)
-        BS_write(out, 0x69); // IMUL r32, r/m32, imm32
-        BS_write(out, 0xC0); // ModRM: mod=11, reg=eax(0), rm=eax(0)
-        BS_write(out, (src.value >> 0) & 0xFF);
-        BS_write(out, (src.value >> 8) & 0xFF);
-        BS_write(out, (src.value >> 16) & 0xFF);
-        BS_write(out, (src.value >> 24) & 0xFF);
-    } else {
-        // IMUL eax, [rbp - slot]  (0F AF /r)
-        int slot = (src.kind == LOC_VAR) ? lookup_var(src.var) : src.offset;
-        BS_write(out, 0x0F);
-        BS_write(out, 0xAF); // IMUL r32, r/m32
-        BS_write(out, 0x45); // ModRM: mod=01, reg=eax(0), rm=rbp(5)
-        BS_write(out, (uint8_t) (-slot));
+void emit_imul_eax(ByteSeg* out, Loc src, GlobalPatchList* gpl, CompilerTarget target) {
+    switch (src.kind) {
+        case LOC_IMMEDIATE:
+            BS_write(out, 0x69);
+            BS_write(out, 0xC0);
+            BS_write(out, (src.value >>  0) & 0xFF);
+            BS_write(out, (src.value >>  8) & 0xFF);
+            BS_write(out, (src.value >> 16) & 0xFF);
+            BS_write(out, (src.value >> 24) & 0xFF);
+            break;
+        case LOC_VAR:
+        case LOC_STACK_SLOT: {
+            int slot = (src.kind == LOC_VAR) ? lookup_var(src.var) : src.offset;
+            BS_write(out, 0x0F);
+            BS_write(out, 0xAF);
+            BS_write(out, 0x45);
+            BS_write(out, (uint8_t)(-slot));
+            break;
+        }
+        case LOC_GLOBAL: {
+            switch (target) {
+                case F_Elf64: {
+                    size_t pos = BS_get_cursor(out) + 3;
+                    BS_write(out, 0x8B);        // MOV ecx, [addr32]
+                    BS_write(out, 0x0C);
+                    BS_write(out, 0x25);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    GPL_register_patch(gpl, (GlobalPatch){
+                        .index = src.offset,
+                        .offset = pos,
+                        .bit_size = 4,
+                    });
+                    BS_write(out, 0x0F);
+                    BS_write(out, 0xAF);        // IMUL eax, ecx
+                    BS_write(out, 0xC1);
+                    break;
+                }
+                case F_Win64: {
+                    size_t pos = BS_get_cursor(out) + 2;
+                    BS_write(out, 0x48); BS_write(out, 0xB9);   // MOV rcx, imm64
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x00); BS_write(out, 0x00);
+                    BS_write(out, 0x8B); BS_write(out, 0x09);   // MOV ecx, [rcx]
+                    GPL_register_patch(gpl, (GlobalPatch){
+                        .index = src.offset,
+                        .offset = pos,
+                        .bit_size = 8,
+                    });
+                    BS_write(out, 0x0F);
+                    BS_write(out, 0xAF);        // IMUL eax, ecx
+                    BS_write(out, 0xC1);
+                    break;
+                }
+            }
+            break;
+        }
     }
 }
+
+// void emit_mov_eax(ByteSeg* out, Loc loc) {
+//     if (loc.kind == LOC_IMMEDIATE) {
+//         // MOV eax, imm32  (B8 id)
+//         BS_write(out, 0xB8);
+//         BS_write(out, (loc.value >> 0) & 0xFF);
+//         BS_write(out, (loc.value >> 8) & 0xFF);
+//         BS_write(out, (loc.value >> 16) & 0xFF);
+//         BS_write(out, (loc.value >> 24) & 0xFF);
+//     } else {
+//         // LOC_VAR + LOC_STACK_SLOT
+//         // MOV eax, [rbp - offset]
+//         int slot = (loc.kind == LOC_VAR) ? lookup_var(loc.var) : loc.offset;
+//         BS_write(out, 0x8B);
+//         BS_write(out, 0x45);
+//         BS_write(out, (uint8_t) (-slot));
+//     }
+// }
+//
+// void emit_op_eax(ByteSeg* out, uint8_t opcode, Loc src) {
+//     if (src.kind == LOC_IMMEDIATE) {
+//         // 81 /0 id  (ADD eax, imm32)  — /0 for ADD, /5 for SUB
+//         // but simpler: MOV ecx, imm32 then OP eax, ecx
+//         BS_write(out, 0xB9); // MOV ecx, imm32
+//         BS_write(out, (src.value >> 0) & 0xFF);
+//         BS_write(out, (src.value >> 8) & 0xFF);
+//         BS_write(out, (src.value >> 16) & 0xFF);
+//         BS_write(out, (src.value >> 24) & 0xFF);
+//         BS_write(out, opcode); // ADD/SUB eax, ecx
+//         BS_write(out, 0xC1); // ModRM: mod=11, reg=eax(0), rm=ecx(1)
+//     } else {
+//         // src is in memory [rbp - offset]
+//         int slot = (src.kind == LOC_VAR) ? lookup_var(src.var) : src.offset;
+//         BS_write(out, opcode); // ADD/SUB eax, [rbp - slot]
+//         BS_write(out, 0x45); // ModRM: mod=01, reg=eax(0), rm=rbp(5)
+//         BS_write(out, (uint8_t) (-slot));
+//     }
+// }
+//
+// void emit_imul_eax(ByteSeg* out, Loc src) {
+//     if (src.kind == LOC_IMMEDIATE) {
+//         // IMUL eax, eax, imm32  (6B /r ib for imm8, 69 /r id for imm32)
+//         BS_write(out, 0x69); // IMUL r32, r/m32, imm32
+//         BS_write(out, 0xC0); // ModRM: mod=11, reg=eax(0), rm=eax(0)
+//         BS_write(out, (src.value >> 0) & 0xFF);
+//         BS_write(out, (src.value >> 8) & 0xFF);
+//         BS_write(out, (src.value >> 16) & 0xFF);
+//         BS_write(out, (src.value >> 24) & 0xFF);
+//     } else {
+//         // IMUL eax, [rbp - slot]  (0F AF /r)
+//         int slot = (src.kind == LOC_VAR) ? lookup_var(src.var) : src.offset;
+//         BS_write(out, 0x0F);
+//         BS_write(out, 0xAF); // IMUL r32, r/m32
+//         BS_write(out, 0x45); // ModRM: mod=01, reg=eax(0), rm=rbp(5)
+//         BS_write(out, (uint8_t) (-slot));
+//     }
+// }
 
 // void emit_jmp_label(ByteSeg* buf, RelocationList* rels, StringView label) {
 //     BS_write(buf, 0xE9); // JMP rel32
@@ -355,6 +531,88 @@ void FCPL_register_pach(FunctionCallPatchList* fl, FunctionCallPatch fp) {
 
 // -----------------------------------------------------------------------------------------
 
+
+GlobalsRegistry GR_new(void) {
+    Global* array = malloc(sizeof(Global)*GlobalsRegistry_default_cap);
+    assert(array != NULL);
+    return (GlobalsRegistry) {
+        .array = array,
+        .cap = GlobalsRegistry_default_cap,
+        .len = 0,
+    };
+}
+
+inline void GR_free(GlobalsRegistry* gr) {
+    free(gr->array);
+}
+
+size_t GR_register_global(GlobalsRegistry* gr, Global g) {
+    if (gr->len + 1 > gr->cap) {
+        gr->cap *= 2;
+        Global* new_array = realloc(gr->array, sizeof(Global)*gr->cap);
+        assert(new_array != NULL);
+        gr->array = new_array;
+    }
+    gr->array[gr->len++] = g;
+    return gr->len - 1;
+}
+bool GR_has_global(GlobalsRegistry* gr, StringView g) {
+    for (size_t n=0; n< gr->len; n++) {
+        if (SV__pp_cmp_eq(&gr->array[n].name, &g)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+Global GR_lookup_global(GlobalsRegistry* gr, StringView g) {
+    for (size_t n=0; n< gr->len; n++) {
+        if (SV__pp_cmp_eq(&gr->array[n].name, &g)) {
+            return gr->array[n];
+        }
+    }
+    fprintf(stderr, "[ERROR] <internal> global variable lookup of non-existent variable '%.*s'\n", (int)g.len, g.start);
+    exit(1);
+}
+
+size_t GR_lookup_global_index(GlobalsRegistry* gr, StringView g) {
+    for (size_t n=0; n< gr->len; n++) {
+        if (SV__pp_cmp_eq(&gr->array[n].name, &g)) {
+            return n;
+        }
+    }
+    fprintf(stderr, "[ERROR] <internal> global variable index lookup of non-existent variable '%.*s'\n", (int)g.len, g.start);
+    exit(1);
+}
+
+
+GlobalPatchList GPL_new(void) {
+    GlobalPatch* array = malloc(sizeof(GlobalPatch)*GlobalPatchList_default_cap);
+    assert(array != NULL);
+    return (GlobalPatchList) {
+        .array = array,
+        .cap = GlobalPatchList_default_cap,
+        .len = 0,
+    };
+}
+inline void GPL_free(GlobalPatchList* gpl) {
+    free(gpl->array);
+}
+void GPL_register_patch(GlobalPatchList* gpl, GlobalPatch gp) {
+    // printf("[DEBUG] patch index = %lu\n", gp.index);
+    if (gpl->len + 1 > gpl->cap) {
+        gpl->cap *= 2;
+        GlobalPatch* new_array = realloc(gpl->array,sizeof(GlobalPatch)*gpl->cap);
+        assert(new_array != NULL);
+        gpl->array = new_array;
+    }
+    gpl->array[gpl->len++] = gp;
+}
+
+
+
+// -----------------------------------------------------------------------------------------
+
 StringConstAddrRelocationList SCARL_new(void) {
     StringConstAddrRelocation* array = malloc(sizeof(StringConstAddrRelocation) * StringConstAddrRelocationList_default_cap);
     assert(array != NULL);
@@ -388,12 +646,17 @@ void SCARL_resolve(StringConstAddrRelocationList* scarl, uint8_t* array, uint64_
         for (size_t i=0; i < rel.const_index;  i++) {
             const_offset += string_consts->array[i].len + 1; // for NULL
         }
-        if (rel.bit_size != 4) {
-            fprintf(stderr, "[ERROR] <internal> string_const_rel.bit_size != 4, = %i\n", rel.bit_size);
+        if (rel.bit_size == 4) {
+            uint32_t addr = (uint32_t)const_section_load_addr + (uint32_t)const_offset;
+            memcpy(array + rel.patch_offset, &addr, 4);
+        } else if (rel.bit_size == 8) {
+            uint64_t addr = (uint64_t)const_section_load_addr + (uint64_t)const_offset;
+            memcpy(array + rel.patch_offset, &addr, 8);
+        } else {
+            fprintf(stderr, "[ERROR] <internal> string_const_rel.bit_size != 4 | 8, = %i\n", rel.bit_size);
             exit(1);
         }
-        uint32_t addr = (uint32_t)const_section_load_addr + (uint32_t)const_offset;
-        memcpy(array + rel.patch_offset, &addr, 4);
+
     }
 }
 
@@ -401,7 +664,7 @@ void SCARL_resolve(StringConstAddrRelocationList* scarl, uint8_t* array, uint64_
 
 // -----------------------------------------------------------------------------------------
 
-void resolve_function_calls(uint8_t* array, size_t addr_offset, FunctionsRegistry* fr, FunctionCallPatchList* patches) {
+void resolve_function_calls(uint8_t* array, size_t local_code_size, FunctionsRegistry* fr, FunctionCallPatchList* patches) {
     for (size_t i = 0; i < patches->len; i++) {
         FunctionCallPatch* patch = &patches->array[i];
 
@@ -412,6 +675,8 @@ void resolve_function_calls(uint8_t* array, size_t addr_offset, FunctionsRegistr
 
         Function f = FR_lookup_function(fr, patch->name);
         size_t target = f.offset;
+
+        // size_t target = f.offset;
         // size_t* target = FR_lookup(fr, patch->name);
         // if (target == NULL) {
         //     fprintf(stderr, "resolve_function_calls: unresolved symbol '%.*s'\n",
@@ -423,17 +688,46 @@ void resolve_function_calls(uint8_t* array, size_t addr_offset, FunctionsRegistr
         uint64_t value;
         // printf("<%.*s> patch->offset=%lu, target=%lu = 0x%x\n", (int)patch->name.len, patch->name.start, patch->offset, target, (uint8_t)target);
 
-        if (patch->relative) {
-            // value = (uint64_t)(target - (patch_site_addr + patch->bit_size));
-            // value = (uint64_t)target;
-            // value = (uint64_t)((addr_offset + target) - (patch->offset + patch->bit_size));
-            value = (uint64_t)(target - (patch->offset + patch->bit_size));
+        uint64_t target_offset;
+        if (patch->is_local) {
+            target_offset = patch->offset;
         } else {
-            fprintf(stderr, "unimplement ndauw nda\n");
+            target_offset = local_code_size + patch->offset;
+        }
+
+
+        if (patch->relative) {
+            value = (uint64_t)(target - (target_offset + patch->bit_size));
+        } else {
+            fprintf(stderr, "unimplement absolute function patching\n");
             exit(1);
             // value = (uint64_t)target;
         }
 
-        memcpy(array + patch->offset, &value, patch->bit_size);
+        // if (!patch->is_local) {
+        //     printf("target_offset = 0x%lx\n", target_offset);
+        //     printf("value = 0x%lx\n", value);
+        // }
+
+        memcpy(array + target_offset, &value, patch->bit_size);
+        // if (patch->is_local) {
+        //     memcpy(array + patch->offset, &value, patch->bit_size);
+        // } else {
+        //     memcpy(array + target_offset, &value, patch->bit_size);
+        // }
+        // memcpy(array + patch->offset, &value, patch->bit_size);
+    }
+}
+
+
+void resolve_globals(uint8_t* array, size_t bss_base_addr, GlobalsRegistry* gr, GlobalPatchList* gpl) {
+    for (size_t i = 0; i < gpl->len; i++) {
+        GlobalPatch* patch = &gpl->array[i];
+        Global* global = &gr->array[patch->index];
+        size_t addr = bss_base_addr + global->bss_offset;
+        uint8_t* target = array + patch->offset;
+        for (uint8_t b = 0; b < patch->bit_size; b++) {
+            target[b] = (addr >> (b * 8)) & 0xFF;
+        }
     }
 }

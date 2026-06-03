@@ -4,8 +4,11 @@
 
 #include "win_gen.h"
 
+#include <assert.h>
 #include <stdio.h>
 #include <string.h>
+
+#include "compiler.h"
 
 void write8(FILE* f, const uint8_t val) {
     fwrite(&val, 1, 1, f);
@@ -43,11 +46,12 @@ static void write_name8(FILE* f, const char* name) {
 
 
 void write_win64(const char* path,
-                 const uint8_t* code, size_t code_len, uint64_t load_addr,
+                 uint8_t* code, size_t code_len, uint64_t load_addr,
                  FunctionsRegistry* fr,
-                 uint64_t str_consts_load_addr, StringViewList* string_consts,
+                 StringViewList* string_consts, StringConstAddrRelocationList* string_consts_relocations,
                  uint32_t num_sections, StringViewList importing_funcs,
-                 uint64_t import_table_load_addr
+                 //uint64_t import_table_load_addr,
+                 size_t bss_size, size_t bss_init_code_len
 ) {
 
 
@@ -63,7 +67,7 @@ void write_win64(const char* path,
     uint32_t num_imports = (uint32_t)importing_funcs.len;
 
 
-
+    size_t image_base = load_addr;
 
 
     size_t string_consts_size = 1;
@@ -147,14 +151,20 @@ void write_win64(const char* path,
     write32(f, 0); /* TimeDateStamp */
     write32(f, 0); /* PointerToSymbolTable */
     write32(f, 0); /* NumberOfSymbols */
-    write16(f, 240); /* CHANGE: SizeOfOptionalHeader: PE32+ uses 240 bytes (was 224) */
+    write16(f, OPT_HDR_SZ); /* CHANGE: SizeOfOptionalHeader: PE32+ uses 240 bytes (was 224) */
     write16(f, 0x0022); /* CHANGE: Characteristics: Executable, Large Address Aware (was 0x103) */
+
+
+    // printf("num_sections = %u\n", num_sections);
+    // printf("bss_size = %lu\n", bss_size);
 
 
     uint32_t import_dir_table_sz = 2 * IMPORT_DIR_ENTRY_SZ;
 
     // 1. Calculate the size of your headers
-    uint32_t headers_sz = pe_offset + PE_HDR_SZ + num_sections * SEC_HDR_SZ;
+    uint32_t headers_sz = pe_offset + PE_HDR_SZ + OPT_HDR_SZ + num_sections * SEC_HDR_SZ;
+    // printf("headers_sz = 0x%x\n", headers_sz);
+    // printf("PE_HDR_SZ = %i\n", PE_HDR_SZ);
 
     // 2. Pre-calculate exact internal .idata sizes
     uint32_t iat_sz       = (num_imports + 1) * IAT_ENTRY_SZ;
@@ -176,6 +186,9 @@ void write_win64(const char* path,
     uint32_t rdata_rva = align_to(text_rva + text_sz, SEC_ALIGN);
     uint32_t rdata_sz  = string_consts_size;
 
+    size_t rdata_virt_addr = image_base + rdata_rva;
+    SCARL_resolve(string_consts_relocations, code, rdata_virt_addr, string_consts);
+
     // uint32_t image_sz  = align_to(rdata_rva + rdata_sz, SEC_ALIGN);
 
     // 4. Map File Offsets (Physical Disk)
@@ -192,9 +205,12 @@ void write_win64(const char* path,
 
 
     uint32_t bss_rva = align_to(rdata_rva + rdata_sz, SEC_ALIGN);
-    uint32_t bss_sz  = 0;
-
+    // uint32_t bss_sz  = 0;
+    uint32_t bss_sz  = (uint32_t)bss_size;  // was hardcoded 0
+    // printf("bss_sz = %u\n", bss_sz);
     uint32_t image_sz = align_to(bss_rva + bss_sz, SEC_ALIGN);
+
+    // uint32_t image_sz = align_to(bss_rva + bss_sz, SEC_ALIGN);
 
 
     /* Optional header, part 1: standard fields */
@@ -207,8 +223,9 @@ void write_win64(const char* path,
     write32(f, text_rva); /* AddressOfEntryPoint */
     write32(f, text_rva); /* BaseOfCode */
 
+
     /* Optional header, part 2: Windows-specific fields */
-    write64(f, load_addr);
+    write64(f, image_base); /* ImageBase */
     write32(f, SEC_ALIGN); /* SectionAlignment */
     write32(f, FILE_ALIGN); /* FileAlignment */
     write16(f, 6); /* MajorOperatingSystemVersion */ // 6 -> Vista, safe for anything newer
@@ -301,14 +318,15 @@ void write_win64(const char* path,
     write32(f, 0x40000040); /* INITIALIZED_DATA | READ */
 
 
-    // write_name8(f, ".bss");
-    // write32(f, bss_sz);
-    // write32(f, bss_rva);
-    // write32(f, 0);          /* SizeOfRawData = 0 for BSS */
-    // write32(f, 0);          /* PointerToRawData = 0 */
-    // write32(f, 0); write32(f, 0);
-    // write16(f, 0); write16(f, 0);
-    // write32(f, 0xC0000080); /* UNINITIALIZED_DATA | READ | WRITE */
+    // assert(bss_sz == 8);
+    write_name8(f, ".bss");
+    write32(f, bss_sz);
+    write32(f, bss_rva);
+    write32(f, 0);          /* SizeOfRawData = 0 for BSS */
+    write32(f, 0);          /* PointerToRawData = 0 */
+    write32(f, 0); write32(f, 0);
+    write16(f, 0); write16(f, 0);
+    write32(f, 0xC0000080); /* UNINITIALIZED_DATA | READ | WRITE */
 
 
 
@@ -358,6 +376,13 @@ void write_win64(const char* path,
 
     /* DLL name */
     fwrite("KERNEL32.DLL\0\0\0", 1, dll_name_sz, f);
+
+
+
+    size_t bss_virt_addr = bss_rva + image_base;
+    // printf("bss_virt_addr = 0x%lx\n", bss_virt_addr);
+    resolve_globals(code, bss_virt_addr, &globals_registry, &global_patch_list);
+    resolve_globals(code + (code_len - bss_init_code_len), bss_virt_addr, &globals_registry, &global_patch_list_inicializer);
 
 
     // printf("text_offset = 0x%x\n", text_offset);

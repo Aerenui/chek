@@ -26,7 +26,8 @@ void write_elf64(
     const char *path,
     const uint8_t *code, size_t code_len, uint64_t load_addr,
     FunctionsRegistry* fr,
-    uint64_t str_consts_load_addr, StringViewList* string_consts
+    uint64_t str_consts_load_addr, StringViewList* string_consts,
+    uint64_t bss_load_addr, size_t bss_size
     ) {
     /*// --- prologue/epilogue ---
     // push rbp; mov rbp, rsp; sub rsp, N  (N = frame.next_offset rounded to 16)
@@ -53,8 +54,8 @@ void write_elf64(
     // uint64_t entry = LOAD_ADDR;
     uint64_t entry = load_addr;
 
-    char shstrtab[] = "\0.text\0.strtab\0.symtab\0.shstrtab\0.rodata\0";
-    Elf64_Shdr shdrs[6] = {0};
+    char shstrtab[] = "\0.text\0.strtab\0.symtab\0.shstrtab\0.rodata\0.bss\0";
+    Elf64_Shdr shdrs[7] = {0};
 
     // [0] null
     shdrs[0] = (Elf64_Shdr){0};
@@ -138,7 +139,7 @@ void write_elf64(
     uint64_t section_headers_file_offset = 1 + shstrtab_file_offset + sizeof(shstrtab);
     // section_headers_file_offset += section_headers_file_offset % PAGE_SIZE; // to full page
 
-    #define phnum 2
+    #define phnum 3
 
     Elf64_Ehdr ehdr = {
         .e_ident = {
@@ -157,7 +158,7 @@ void write_elf64(
         .e_phentsize = sizeof(Elf64_Phdr),
         .e_phnum     = phnum,
         .e_shentsize = sizeof(Elf64_Shdr),
-        .e_shnum     = 6,
+        .e_shnum     = 7, // section count
         .e_shstrndx  = 4, // SHN_UNDEF,
     };
 
@@ -185,6 +186,17 @@ void write_elf64(
         .sh_offset    = string_consts_file_offset,
         .sh_size      = string_consts_size,
         .sh_addr = str_consts_load_addr,
+        .sh_addralign = PAGE_SIZE,
+    };
+
+    // bss_load_addr
+    shdrs[6] = (Elf64_Shdr){
+        .sh_name      = 33+7, // offset of ".bss" in shstrtab  <- update this offset
+        .sh_type      = SHT_NOBITS,
+        .sh_flags     = SHF_ALLOC | SHF_WRITE,
+        .sh_offset    = string_consts_file_offset+string_consts_size,
+        .sh_size      = bss_size,
+        .sh_addr      = bss_load_addr,
         .sh_addralign = PAGE_SIZE,
     };
 
@@ -217,6 +229,18 @@ void write_elf64(
         .p_filesz = string_consts_size,
         .p_memsz  = string_consts_size,
         .p_align = 0x1000,
+    };
+
+    // LOAD .bss
+    phdr_lst[2] = (Elf64_Phdr){
+        .p_type   = PT_LOAD,
+        .p_flags  = PF_R | PF_W,
+        .p_offset = string_consts_file_offset+string_consts_size,
+        .p_vaddr  = bss_load_addr,    // 0x600000
+        .p_paddr  = bss_load_addr,
+        .p_filesz = 0,                // no file bytes
+        .p_memsz  = bss_size,         // but reserve this much in memory
+        .p_align  = PAGE_SIZE,
     };
 
 
@@ -257,4 +281,5 @@ void write_elf64(
 
     chmod(path, 0755);
 
+    free(string_consts_array);
 }

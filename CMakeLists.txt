@@ -19,7 +19,6 @@ include_directories(src)
 
 add_executable(main ${PROJECT_SOURCES})
 
-# Compiler flags per build type
 if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_C_COMPILER_ID MATCHES "Clang")
     target_compile_options(main PRIVATE
             -Wall -Wextra -Werror -Wpedantic
@@ -39,8 +38,6 @@ endif()
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     find_library(MIMALLOC_STATIC
             NAMES libmimalloc.a
-#            NAMES libmimalloc.a mimalloc
-#            HINTS /usr/lib /usr/local/lib
     )
     if(MIMALLOC_STATIC)
         message(STATUS "mimalloc found: ${MIMALLOC_STATIC}")

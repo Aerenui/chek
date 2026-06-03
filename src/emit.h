@@ -4,6 +4,7 @@
 
 #ifndef SIMPLECOMPILERINC_2_EMIT_H
 #define SIMPLECOMPILERINC_2_EMIT_H
+#include "main.h"
 #include "utils.h"
 
 typedef struct {
@@ -11,7 +12,7 @@ typedef struct {
     int peek; // peek with temp vars.
 } StackFrame;
 
-typedef enum { LOC_IMMEDIATE, LOC_VAR, LOC_STACK_SLOT } LocKind;
+typedef enum { LOC_IMMEDIATE, LOC_VAR, LOC_GLOBAL, LOC_STACK_SLOT } LocKind;
 
 typedef struct {
     LocKind kind;
@@ -45,12 +46,11 @@ void LS_free(LocStack*);
 
 // ---------------------------------------------------
 
-void emit_mov_eax(ByteSeg*, Loc);
+// void emit_mov_eax(ByteSeg*, Loc);
 
-void emit_op_eax(ByteSeg*, uint8_t, Loc);
+// void emit_op_eax(ByteSeg*, uint8_t, Loc);
 
-void emit_imul_eax(ByteSeg*, Loc);
-
+// void emit_imul_eax(ByteSeg*, Loc);
 
 // -----------------------------------------------------------------------------------------
 
@@ -139,6 +139,7 @@ typedef struct {
     size_t offset;
     bool relative;
     uint8_t bit_size;
+    bool is_local;
 } FunctionCallPatch;
 
 typedef struct {
@@ -164,6 +165,49 @@ void FCPL_register_pach(FunctionCallPatchList*, FunctionCallPatch);
 // -----------------------------------------------------------------------------------------
 
 typedef struct {
+    StringView name;
+    int bss_offset;
+} Global;
+
+typedef struct {
+    Global* array;
+    size_t len;
+    size_t cap;
+} GlobalsRegistry;
+#define GlobalsRegistry_default_cap 4
+
+
+typedef struct {
+    size_t index;
+    size_t offset;
+    bool relative;
+    uint8_t bit_size;
+} GlobalPatch;
+
+typedef struct {
+    GlobalPatch* array;
+    size_t len;
+    size_t cap;
+} GlobalPatchList;
+#define GlobalPatchList_default_cap 4
+
+
+GlobalsRegistry GR_new(void);
+void GR_free(GlobalsRegistry*);
+size_t GR_register_global(GlobalsRegistry*, Global);
+bool GR_has_global(GlobalsRegistry*, StringView);
+Global GR_lookup_global(GlobalsRegistry*, StringView);
+size_t GR_lookup_global_index(GlobalsRegistry*, StringView);
+
+
+GlobalPatchList GPL_new(void);
+void GPL_free(GlobalPatchList*);
+void GPL_register_patch(GlobalPatchList*, GlobalPatch);
+
+
+// -----------------------------------------------------------------------------------------
+
+typedef struct {
     size_t const_index;
     size_t patch_offset;
     uint8_t bit_size;
@@ -184,7 +228,15 @@ void SCARL_resolve(StringConstAddrRelocationList*, uint8_t*, uint64_t, StringVie
 
 // -----------------------------------------------------------------------------------------
 
+void emit_mov_eax(ByteSeg* out, Loc loc, GlobalPatchList* gpl, CompilerTarget target);
+void emit_op_eax(ByteSeg* out, uint8_t opcode, Loc src, GlobalPatchList* gpl, CompilerTarget target);
+void emit_imul_eax(ByteSeg* out, Loc src, GlobalPatchList* gpl, CompilerTarget target);
+
+
+// -----------------------------------------------------------------------------------------
+
 void resolve_relocations(ByteSeg*, RelocationList*, LabelList*);
-void resolve_function_calls(uint8_t* array, size_t addr_offset, FunctionsRegistry*, FunctionCallPatchList*);
+void resolve_function_calls(uint8_t* array, size_t local_code_size, FunctionsRegistry*, FunctionCallPatchList*);
+void resolve_globals(uint8_t* array, size_t bss_base_addr, GlobalsRegistry*, GlobalPatchList*);
 
 #endif //SIMPLECOMPILERINC_2_EMIT_H

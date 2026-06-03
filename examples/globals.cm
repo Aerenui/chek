@@ -1,0 +1,29 @@
+include "libs/print_int.cm";
+
+
+global int a: 10;
+global int b: a * 5;
+global int c: b / a;
+global int d: a < b & c = 5;
+
+global int e1: 5;
+global int e2: 6;
+global int e: e1 ! e2;
+
+void print_globals()
+    print 97 32;  call print_int(a); print 10;
+    print 98 32;  call print_int(b); print 10;
+    print 99 32;  call print_int(c); print 10;
+    print 100 32; call print_int(d); print 10;
+    print 101 32; call print_int(e); print 10;
+end
+
+int main()
+    call print_int(a); print 10;
+    set a: a + 10;
+    call print_int(a); print 10;
+
+    call print_globals();
+
+    return 0;
+end

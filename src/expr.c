@@ -11,7 +11,6 @@
 #include "utils.h"
 
 
-
 bool is_digit(char c) {
     return c >= '0' && c <= '9';
 }
@@ -31,11 +30,11 @@ int precedence(char op) {
 }
 
 bool is_operator(char c) {
-    return  c == '+' || c == '-' ||
-            c == '*' || c == '/' ||
-            c == '<' || c == '>' ||
-            c == '=' || c == '%' ||
-            c == '&' || c == '|' || c == '!';
+    return c == '+' || c == '-' ||
+           c == '*' || c == '/' ||
+           c == '<' || c == '>' ||
+           c == '=' || c == '%' ||
+           c == '&' || c == '|' || c == '!';
 }
 
 /*char* format_operator(char c) {
@@ -48,7 +47,7 @@ bool is_operator(char c) {
 }*/
 
 
-Loc/*StringView*/ get_int_expr(StringViewListView* view) {
+Loc/*StringView*/ get_int_expr(StringViewListView* view, CompilerTarget target, bool is_local) {
     StringViewList ot = SVL_new();
     StringViewList operator_stack = SVL_new();
     bool expect_operator = false;
@@ -116,7 +115,8 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view) {
         StringView nw = SVLV_inspect_back(view);
         {
             char fc = nw.start[0];
-            if (is_digit(fc) || is_operator(fc) || is_alpha(fc) || fc == '(' || fc == ')'); else {
+            if (is_digit(fc) || is_operator(fc) || is_alpha(fc) || fc == '(' || fc == ')');
+            else {
                 break;
             }
             if (fc == ';') break;
@@ -158,7 +158,7 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view) {
                        SVL_p_inspect_back(&operator_stack)->start[0]) >= precedence(current_op)) {
                 StringView val = SVL_p_pop(&operator_stack);
                 SVL_p_push(&ot, val);
-                       }
+            }
             SVL_p_push(&operator_stack, nw);
             expect_operator = false;
         }
@@ -172,197 +172,282 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view) {
         }
     }
 
-    /*printf("EXPR: [");
-    for (size_t i =0; i < ot.len; i++) {
-        putc('\'', stdout);
-        SV_p_printf(&ot.array[i]);
-        if (i + 1 != ot.len)
-            printf("', ");
-        else
-            printf("']\n");
-    }*/
-    // printf("EXPR: [");
-
-    // BSL_write_byte(&code_output, var_name.start[i]);
-
-
-    /*StringViewList stack = SVL_new();
-    for (size_t i = 0; i < ot.len; i++) {
-        StringView sv = ot.array[i];
-        if (is_operator(sv.start[0])) {
-            StringView s2 = SVL_p_pop(&stack);
-            StringView s1 = SVL_p_pop(&stack);
-
-            if (sv.start[0] == '<' || sv.start[0] == '>' || sv.start[0] == '=') {
-                printf("  %%cmp_%lu = icmp eq i32 %.*s, %.*s\n", tmp_cnt, (int) s1.len, s1.start, (int) s2.len,
-                       s2.start);
-                printf("  %%tmp_%lu = zext i1 %%cmp_%lu to i32\n", tmp_cnt, tmp_cnt);
-            } else {
-                // +, -, *, /
-                printf("  %%tmp_%lu = %s nsw i32 %.*s, %.*s\n", tmp_cnt, format_operator(sv.start[0]), (int) s1.len,
-                       s1.start, (int) s2.len, s2.start);
-            }
-            char *s3 = calloc(30, 1);
-            snprintf(s3, 30, "%%tmp_%lu", tmp_cnt);
-            SVL_p_push(&stack, SV_from_string(s3));
-            tmp_cnt++;
-        } else {
-            if (is_alpha(sv.start[0])) {
-                printf("  %%tmp_%lu = load i32, ptr %%var_%.*s, align 4\n", tmp_cnt, (int) sv.len, sv.start);
-                char *s3 = calloc(30, 1);
-                snprintf(s3, 30, "%%tmp_%lu", tmp_cnt);
-                SVL_p_push(&stack, SV_from_string(s3));
-                tmp_cnt++;
-            } else {
-                SVL_p_push(&stack, sv);
-            }
-        }
-    }
-    StringView last = SVL_p_pop(&stack);*/
-    // printf("  store i32 %.*s", (int)last.len, last.start);
-
-    // Replace the bottom half of get_int_expr, from the stack loop down:
-
-    /*printf("ot.len = %zu\n", ot.len);
-    for (size_t i = 0; i < ot.len; i++) {
-        printf("  ot[%zu] = '%.*s'\n", i, (int)ot.array[i].len, ot.array[i].start);
-    }*/
 
     LocStack stack2 = LS_new();
 
     for (size_t i = 0; i < ot.len; i++) {
         StringView sv = ot.array[i];
         // printf("  i=%zu sv='%.*s' stack_size=%zu\n", i, (int)sv.len, sv.start, stack2.len);
+        GlobalPatchList* globals_patch_ptr = is_local ? &global_patch_list : &global_patch_list_inicializer;
 
         if (is_operator(sv.start[0])) {
             Loc s2 = LS_pop(&stack2);
             Loc s1 = LS_pop(&stack2);
 
-            emit_mov_eax(&code_output, s1);
+            emit_mov_eax(code_output, s1, globals_patch_ptr, target);
 
-            if (sv.start[0] == '+') emit_op_eax(&code_output, 0x03, s2);
-            else if (sv.start[0] == '-') emit_op_eax(&code_output, 0x2B, s2);
-            else if (sv.start[0] == '*') emit_imul_eax(&code_output, s2);
-            else if (sv.start[0] == '&') emit_op_eax(&code_output, 0x23, s2); // AND
-            else if (sv.start[0] == '|') emit_op_eax(&code_output, 0x0B, s2); // OR
+            if (sv.start[0] == '+') emit_op_eax(code_output, 0x03, s2, globals_patch_ptr, target);
+            else if (sv.start[0] == '-') emit_op_eax(code_output, 0x2B, s2, globals_patch_ptr, target);
+            else if (sv.start[0] == '*') emit_imul_eax(code_output, s2, globals_patch_ptr, target);
+            else if (sv.start[0] == '&') emit_op_eax(code_output, 0x23, s2, globals_patch_ptr, target); // AND
+            else if (sv.start[0] == '|') emit_op_eax(code_output, 0x0B, s2, globals_patch_ptr, target); // OR
             else if (sv.start[0] == '<' || sv.start[0] == '>' || sv.start[0] == '=' || sv.start[0] == '!') {
                 // 1. Do the comparison FIRST while s1 is still naturally in eax.
-                // (We change the ModRM bytes to compare against eax instead of edx)
-                if (s2.kind == LOC_IMMEDIATE) {
-                    BS_write(&code_output, 0x81);        // CMP eax, imm32
-                    BS_write(&code_output, 0xF8);        // ModRM changed from 0xFA (edx) to 0xF8 (eax)
-                    BS_write(&code_output, (s2.value >>  0) & 0xFF);
-                    BS_write(&code_output, (s2.value >>  8) & 0xFF);
-                    BS_write(&code_output, (s2.value >> 16) & 0xFF);
-                    BS_write(&code_output, (s2.value >> 24) & 0xFF);
-                } else {
-                    int slot = (s2.kind == LOC_VAR) ? lookup_var(s2.var) : s2.offset;
-                    BS_write(&code_output, 0x3B);        // CMP eax, [rbp-slot]
-                    BS_write(&code_output, 0x45);        // ModRM changed from 0x55 (edx) to 0x45 (eax)
-                    BS_write(&code_output, (uint8_t)(-slot));
+                switch (s2.kind) {
+                    case LOC_IMMEDIATE:
+                        BS_write(code_output, 0x81); // CMP eax, imm32
+                        BS_write(code_output, 0xF8);
+                        BS_write(code_output, (s2.value >> 0) & 0xFF);
+                        BS_write(code_output, (s2.value >> 8) & 0xFF);
+                        BS_write(code_output, (s2.value >> 16) & 0xFF);
+                        BS_write(code_output, (s2.value >> 24) & 0xFF);
+                        break;
+                    case LOC_VAR:
+                    case LOC_STACK_SLOT: {
+                        int slot = (s2.kind == LOC_VAR) ? lookup_var(s2.var) : s2.offset;
+                        BS_write(code_output, 0x3B); // CMP eax, [rbp-slot]
+                        BS_write(code_output, 0x45);
+                        BS_write(code_output, (uint8_t) (-slot));
+                        break;
+                    }
+                    case LOC_GLOBAL: {
+                        switch (target) {
+                            case F_Elf64: {
+                                size_t pos = BS_get_cursor(code_output) + 3;
+                                BS_write(code_output, 0x8B); // MOV ecx, [addr32]
+                                BS_write(code_output, 0x0C);
+                                BS_write(code_output, 0x25);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                GPL_register_patch(globals_patch_ptr, (GlobalPatch){
+                                                       .index = s2.offset,
+                                                       .offset = pos,
+                                                       .bit_size = 4,
+                                                   });
+                                break;
+                            }
+                            case F_Win64: {
+                                size_t pos = BS_get_cursor(code_output) + 2;
+                                BS_write(code_output, 0x48);
+                                BS_write(code_output, 0xB9); // MOV rcx, imm64
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x8B);
+                                BS_write(code_output, 0x09); // MOV ecx, [rcx]
+                                GPL_register_patch(globals_patch_ptr, (GlobalPatch){
+                                                       .index = s2.offset,
+                                                       .offset = pos,
+                                                       .bit_size = 8,
+                                                   });
+                                break;
+                            }
+                        }
+                        BS_write(code_output, 0x3B); // CMP eax, ecx
+                        BS_write(code_output, 0xC1);
+                        break;
+                    }
                 }
 
                 // 2. Load your truth values. These MOV instructions do NOT affect EFLAGS.
                 // MOV eax, 1
-                BS_write(&code_output, 0xB8);
-                BS_write(&code_output, 0x01); BS_write(&code_output, 0x00);
-                BS_write(&code_output, 0x00); BS_write(&code_output, 0x00);
+                BS_write(code_output, 0xB8);
+                BS_write(code_output, 0x01);
+                BS_write(code_output, 0x00);
+                BS_write(code_output, 0x00);
+                BS_write(code_output, 0x00);
 
                 // MOV ecx, 0
-                BS_write(&code_output, 0xB9);
-                BS_write(&code_output, 0x00); BS_write(&code_output, 0x00);
-                BS_write(&code_output, 0x00); BS_write(&code_output, 0x00);
+                BS_write(code_output, 0xB9);
+                BS_write(code_output, 0x00);
+                BS_write(code_output, 0x00);
+                BS_write(code_output, 0x00);
+                BS_write(code_output, 0x00);
 
                 // 3. Conditionally move 0 into eax if the condition is false.
                 // The flags from the CMP we ran up top are still valid!
-                BS_write(&code_output, 0x0F);
+                BS_write(code_output, 0x0F);
+                // switch (sv.start[0]) {
+                //     case '<': BS_write(code_output, 0x43);
+                //         break; // CMOVAE (not less)
+                //     case '>': BS_write(code_output, 0x46);
+                //         break; // CMOVBE (not greater)
+                //     case '=': BS_write(code_output, 0x45);
+                //         break; // CMOVNE (not equal)
+                //     case '!': BS_write(code_output, 0x44);
+                //         break; // CMOVE (not-not-equal, i.e. equal → false)
+                //     default: {
+                //         fprintf(stderr, "[ERROR] <internal> invalid switch path\n");
+                //         exit(1);
+                //     }
+                // }
                 switch (sv.start[0]) {
-                    case '<': BS_write(&code_output, 0x43); break; // CMOVAE (not less)
-                    case '>': BS_write(&code_output, 0x46); break; // CMOVBE (not greater)
-                    case '=': BS_write(&code_output, 0x45); break; // CMOVNE (not equal)
-                    case '!': BS_write(&code_output, 0x44); break; // CMOVE (not-not-equal, i.e. equal → false)
-                    default: {
+                    case '<': BS_write(code_output, 0x4D); break; // CMOVGE (not signed-less)
+                    case '>': BS_write(code_output, 0x4E); break; // CMOVLE (not signed-greater)
+                    case '=': BS_write(code_output, 0x45); break; // CMOVNE (not equal)
+                    case '!': BS_write(code_output, 0x44); break; // CMOVE  (not not-equal)
+                    default:
                         fprintf(stderr, "[ERROR] <internal> invalid switch path\n");
                         exit(1);
-                    }
                 }
-                BS_write(&code_output, 0xC1);            // ModRM: eax, ecx
+                BS_write(code_output, 0xC1); // ModRM: eax, ecx
             } else if (sv.start[0] == '/' || sv.start[0] == '%') {
-                // idiv cannot take an immediate — spill s2 to stack if needed
+                // idiv cannot take an immediate or global — spill s2 to stack if needed
                 int s2_slot;
-                if (s2.kind == LOC_IMMEDIATE) {
-                    s2_slot = alloc_tmp_stack_slot(get_frame());
-                    BS_write(&code_output, 0xC7);
-                    BS_write(&code_output, 0x45);
-                    BS_write(&code_output, (uint8_t)(-s2_slot));
-                    BS_write(&code_output, (s2.value >>  0) & 0xFF);
-                    BS_write(&code_output, (s2.value >>  8) & 0xFF);
-                    BS_write(&code_output, (s2.value >> 16) & 0xFF);
-                    BS_write(&code_output, (s2.value >> 24) & 0xFF);
-                } else {
-                    s2_slot = (s2.kind == LOC_VAR) ? lookup_var(s2.var) : s2.offset;
+                switch (s2.kind) {
+                    case LOC_IMMEDIATE: {
+                        if (is_local)
+                            s2_slot = alloc_tmp_stack_slot(get_frame());
+                        else {
+                            s2_slot = global_frame.next_offset;
+                            global_frame.next_offset += 4;
+                        }
+                        BS_write(code_output, 0xC7);
+                        BS_write(code_output, 0x45);
+                        BS_write(code_output, (uint8_t) (-s2_slot));
+                        BS_write(code_output, (s2.value >> 0) & 0xFF);
+                        BS_write(code_output, (s2.value >> 8) & 0xFF);
+                        BS_write(code_output, (s2.value >> 16) & 0xFF);
+                        BS_write(code_output, (s2.value >> 24) & 0xFF);
+                        break;
+                    }
+                    case LOC_VAR:
+                        s2_slot = lookup_var(s2.var);
+                        break;
+                    case LOC_STACK_SLOT:
+                        s2_slot = s2.offset;
+                        break;
+                    case LOC_GLOBAL: {
+                        if (is_local)
+                            s2_slot = alloc_tmp_stack_slot(get_frame());
+                        else {
+                            s2_slot = global_frame.next_offset;
+                            global_frame.next_offset += 4;
+                        }
+                        switch (target) {
+                            case F_Elf64: {
+                                size_t pos = BS_get_cursor(code_output) + 3;
+                                BS_write(code_output, 0x8B); // MOV ecx, [addr32]
+                                BS_write(code_output, 0x0C);
+                                BS_write(code_output, 0x25);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                GPL_register_patch(globals_patch_ptr, (GlobalPatch){
+                                                       .index = s2.offset,
+                                                       .offset = pos,
+                                                       .bit_size = 4,
+                                                   });
+                                break;
+                            }
+                            case F_Win64: {
+                                size_t pos = BS_get_cursor(code_output) + 2;
+                                BS_write(code_output, 0x48);
+                                BS_write(code_output, 0xB9); // MOV rcx, imm64
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x00);
+                                BS_write(code_output, 0x8B);
+                                BS_write(code_output, 0x09); // MOV ecx, [rcx]
+                                GPL_register_patch(globals_patch_ptr, (GlobalPatch){
+                                                       .index = s2.offset,
+                                                       .offset = pos,
+                                                       .bit_size = 8,
+                                                   });
+                                break;
+                            }
+                        }
+                        BS_write(code_output, 0x89); // MOV [rbp - s2_slot], ecx
+                        BS_write(code_output, 0x4D);
+                        BS_write(code_output, (uint8_t) (-s2_slot));
+                        break;
+                    }
                 }
 
                 // RUNTIME ZERO DIV CHECK
 
                 // cmp dword ptr [rbp - s2_slot], 0
-                BS_write(&code_output, 0x83);
-                BS_write(&code_output, 0x7D);
-                BS_write(&code_output, (uint8_t)(-s2_slot));
-                BS_write(&code_output, 0x00);
+                BS_write(code_output, 0x83);
+                BS_write(code_output, 0x7D);
+                BS_write(code_output, (uint8_t) (-s2_slot));
+                BS_write(code_output, 0x00);
 
                 // jnz +5  (skip the call)
-                BS_write(&code_output, 0x75);
-                BS_write(&code_output, 0x05);
+                BS_write(code_output, 0x75);
+                BS_write(code_output, 0x05);
 
                 // call <__rt_exception__zero_div>  (5 bytes, needs patching like your entry_point)
-                size_t divz_patch_cursor = BS_get_cursor(&code_output) + 1;
-                uint8_t call_divz[] = { 0xe8, 0x00, 0x00, 0x00, 0x00 };
-                BS_write_array(&code_output, sizeof(call_divz), call_divz);
+                size_t divz_patch_cursor = BS_get_cursor(code_output) + 1;
+                uint8_t call_divz[] = {0xe8, 0x00, 0x00, 0x00, 0x00};
+                BS_write_array(code_output, sizeof(call_divz), call_divz);
 
-                FCPL_register_pach(&function_patch_list, (FunctionCallPatch) {
-                    .name = SV_from_string_len("__rt_exception__zero_div", 24),
-                    .offset = divz_patch_cursor,
-                    .relative = true,
-                    .bit_size = 4,
-                });
+                FCPL_register_pach(&function_patch_list, (FunctionCallPatch){
+                                       .name = SV_from_string_len("__rt_exception__zero_div", 24),
+                                       .offset = divz_patch_cursor,
+                                       .relative = true,
+                                       .bit_size = 4,
+                                       .is_local = is_local,
+                                   });
 
                 // END OF RUNTIME ZERO DIV CHECK
 
 
-
-
                 // cdq — sign-extend eax into edx:eax
-                BS_write(&code_output, 0x99);
+                BS_write(code_output, 0x99);
 
                 // idiv dword ptr [rbp - s2_slot]
-                BS_write(&code_output, 0xF7);
-                BS_write(&code_output, 0x7D);
-                BS_write(&code_output, (uint8_t)(-s2_slot));
+                BS_write(code_output, 0xF7);
+                BS_write(code_output, 0x7D);
+                BS_write(code_output, (uint8_t) (-s2_slot));
 
                 // for '%', result is in edx — move it to eax
                 if (sv.start[0] == '%') {
-                    BS_write(&code_output, 0x89);  // mov eax, edx
-                    BS_write(&code_output, 0xD0);
+                    BS_write(code_output, 0x89); // mov eax, edx
+                    BS_write(code_output, 0xD0);
                 }
             }
 
 
-            int slot = alloc_stack_slot(get_frame());
+            int slot; // = alloc_stack_slot(get_frame());
+            if (is_local)
+                slot = alloc_stack_slot(get_frame());
+            else {
+                slot = global_frame.next_offset;
+                global_frame.next_offset += 4;
+            }
             // MOV [rbp - slot], eax
-            BS_write(&code_output, 0x89);
-            BS_write(&code_output, 0x45);
-            BS_write(&code_output, (uint8_t)(-slot));
+            BS_write(code_output, 0x89);
+            BS_write(code_output, 0x45);
+            BS_write(code_output, (uint8_t) (-slot));
 
-            LS_push(&stack2, (Loc){ .kind = LOC_STACK_SLOT, .offset = slot });
-
+            LS_push(&stack2, (Loc){.kind = LOC_STACK_SLOT, .offset = slot});
         } else if (is_alpha(sv.start[0])) {
-            // variable — defer load, just record it
-            LS_push(&stack2, (Loc){ .kind = LOC_VAR, .var = sv });
-
+            if (exists_var(sv)) {
+                // variable — defer load, just record it
+                LS_push(&stack2, (Loc){.kind = LOC_VAR, .var = sv});
+            } else if (GR_has_global(&globals_registry, sv)) {
+                size_t global_index = GR_lookup_global_index(&globals_registry, sv);
+                LS_push(&stack2, (Loc){.kind = LOC_GLOBAL, .offset = global_index});
+            } else {
+                fprintf(stderr, "[ERROR] unknown variable '%.*s'\n", (int) sv.len, sv.start);
+                exit(1);
+            }
         } else {
             // numeric literal
-            LS_push(&stack2, (Loc){ .kind = LOC_IMMEDIATE, .value = atoi(sv.start) });
+            LS_push(&stack2, (Loc){.kind = LOC_IMMEDIATE, .value = atoi(sv.start)});
         }
     }
 
@@ -371,13 +456,9 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view) {
         fprintf(stderr, "[ERROR] <internal> expr-eval stack in not empty after processing\n");
         exit(1);
     }
-    // caller decides what to do with last (store, return, etc.)
 
-    // SVL_p_free(&stack);
     LS_free(&stack2);
     SVL_p_free(&ot);
     SVL_p_free(&operator_stack);
-    // exit(10);
     return last;
 }
-

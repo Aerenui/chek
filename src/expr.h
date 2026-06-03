@@ -8,6 +8,6 @@
 #include "utils.h"
 
 
-Loc get_int_expr(StringViewListView*);
+Loc get_int_expr(StringViewListView*, CompilerTarget, bool is_local);
 
 #endif //SIMPLECOMPILERINC_2_EXPR_H
