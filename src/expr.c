@@ -300,7 +300,7 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view, CompilerTarget target, 
                 BS_write(code_output, 0xC1); // ModRM: eax, ecx
             } else if (sv.start[0] == '/' || sv.start[0] == '%') {
                 // idiv cannot take an immediate or global — spill s2 to stack if needed
-                int s2_slot;
+                int s2_slot = 0;
                 switch (s2.kind) {
                     case LOC_IMMEDIATE: {
                         if (is_local)
