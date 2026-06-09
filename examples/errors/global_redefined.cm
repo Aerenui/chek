@@ -1,0 +1,11 @@
+include "../libs/print_int.cm";
+
+global int a: 10;
+global int b: a + 10;
+global int a: b + a;
+
+
+int main()
+    call print_int(123);
+    return 0;
+end

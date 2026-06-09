@@ -15,7 +15,7 @@
   #include <stdlib.h>
 #endif
 
-char *read_file(const char *path, size_t *out_len) {
+char* read_file(const char *path, size_t *out_len) {
     FILE *f = fopen(path, "rb");
     if (!f) {
         perror(path);
@@ -55,7 +55,7 @@ char *read_file(const char *path, size_t *out_len) {
 }
 
 
-void resolve_import_path(const char* importing_file, const char* import_path, char* out) {
+void resolve_import_path(const char* restrict importing_file, const char* restrict import_path, char* restrict out) {
     char dir[PATH_MAX];
     // strncpy(dir, importing_file, PATH_MAX); // PATH_MAX is guaranteed by realpath that produced import_path
     strcpy(dir, importing_file);
@@ -96,14 +96,14 @@ inline void SV_p_printf(const StringView *sv) {
     printf("%.*s", (int) sv->len, sv->start);
 }
 
-inline bool SV__pp_cmp_eq(const StringView *sv1, const StringView *sv2) {
+inline bool SV_pp_cmp_eq(const StringView *sv1, const StringView *sv2) {
     if (sv1->len != sv2->len) {
         return false;
     }
     return memcmp(sv1->start, sv2->start, sv1->len) == 0;
 }
 
-inline bool SV__pv_cmp_eq(const StringView* sv1, const char* sv2, const size_t sv2_len) {
+inline bool SV_pv_cmp_eq(const StringView* restrict sv1, const char* restrict sv2, const size_t sv2_len) {
     assert(strlen(sv2) == sv2_len);
     if (sv1->len != sv2_len) {
         return false;
@@ -111,12 +111,12 @@ inline bool SV__pv_cmp_eq(const StringView* sv1, const char* sv2, const size_t s
     return memcmp(sv1->start, sv2, sv1->len) == 0;
 }
 
-inline StringView SV_lslice_from_SV(const StringView* sv, size_t new_size) {
+inline StringView SV_lslice_from_SV(const StringView* sv, const size_t new_size) {
     assert(sv->len >= new_size);
     return (StringView) { .start = sv->start, .len = new_size };
 }
 
-inline StringView SV_lrslice_from_SV(const StringView* sv, size_t start_index, size_t len) {
+inline StringView SV_lrslice_from_SV(const StringView* sv, const size_t start_index, const size_t len) {
     assert(sv->len >= (start_index + len));
     return (StringView) { .start = (sv->start)+sizeof(char)*start_index, .len = len };
 }
@@ -230,116 +230,6 @@ StringViewListView SVLV_from_SVL(const StringViewList* svl) {
 // ------------------------------------------------------------------
 
 
-// inline ByteSeg BS_new(void) {
-//     return (ByteSeg) {
-//         .array = {0},
-//         .cursor = 0,
-//         .size = ByteSeg_size
-//     };
-// }
-//
-// ByteSegList BSL_new(void) {
-//     size_t cap = 4;
-//     ByteSeg* array = malloc(cap * sizeof(ByteSeg));
-//     for (size_t n=0; n < cap; n++)
-//         array[n] = BS_new();
-//
-//     return (ByteSegList) {
-//         .array = array,
-//         .len = 0,
-//         .cap = cap,
-//         .cursor = 0,
-//     };
-// }
-//
-// void BS_print(ByteSeg* bs) {
-//     for (int i = 0; i < ByteSeg_size; i++) {
-//         if (i > 0 && i % 8 == 0) printf("\n");
-//         printf("0x%02X ", bs->array[i]);
-//     }
-//     printf("\n");
-// }
-//
-// inline void BS_write_byte(ByteSeg* bs, uint8_t val) {
-//     bs->array[bs->cursor++] = val;
-// }
-//
-// inline size_t BS_get_cursor(ByteSeg* bs) {
-//     return bs->cursor;
-// }
-//
-// void BS_set_cursor(ByteSeg* bs, size_t cur) {
-//     assert(cur <= bs->size);
-//     bs->cursor = cur;
-// }
-//
-// inline bool BS_has_space(ByteSeg* bs) {
-//     return bs->cursor < bs->size;
-// }
-//
-// /*void BSL_write_byte(ByteSegList* bsl, uint8_t val) {
-//     if (BS_has_space(&bsl->array[bsl->cursor])) {
-//         BS_write_byte(&bsl->array[bsl->cursor], val);
-//         return;
-//     }
-//
-//     bsl->len++;
-//     if (bsl->len + 1 >= bsl->cap) {
-//         size_t org_cap = bsl->cap;
-//         if (bsl->cap == 0) bsl->cap = ByteSeg_size;
-//         else bsl->cap *= 2;
-//
-//         ByteSeg* new_array = realloc(bsl->array, sizeof(ByteSeg) * bsl->cap);
-//         assert(new_array != NULL);
-//         bsl->array = new_array;
-//         for (size_t n = org_cap; n < bsl->cap; n++) {
-//             bsl->array[n] = BS_new();
-//         }
-//         // memset(bsl->array + org_cap, 0, (bsl->cap - org_cap) * sizeof(ByteSeg));
-//     }
-//
-//     bsl->cursor++;
-//     BS_write_byte(&bsl->array[bsl->cursor], val);
-// }*/
-// void BSL_write_byte(ByteSegList* bsl, uint8_t val) {
-//     if (bsl->len == 0) {
-//         bsl->array[0] = BS_new();
-//         bsl->len++;
-//     }
-//
-//     if (BS_has_space(&bsl->array[bsl->cursor])) {
-//         BS_write_byte(&bsl->array[bsl->cursor], val);
-//         return;
-//     }
-//
-//     bsl->len++;  // current segment is now full, record it
-//
-//     if (bsl->len + 1 >= bsl->cap) {
-//         size_t org_cap = bsl->cap;
-//         if (bsl->cap == 0) bsl->cap = 4;
-//         else bsl->cap *= 2;
-//
-//         ByteSeg* new_array = realloc(bsl->array, sizeof(ByteSeg) * bsl->cap);
-//         assert(new_array != NULL);
-//         bsl->array = new_array;
-//         for (size_t n = org_cap; n < bsl->cap; n++)
-//             bsl->array[n] = BS_new();
-//         // remove the memset — it overwrites the BS_new() you just did
-//     }
-//
-//     bsl->cursor++;
-//     BS_write_byte(&bsl->array[bsl->cursor], val);
-// }
-//
-// inline ByteSegList_BytePosition BSL_get_cursor(ByteSegList* bsl) {
-//     return (ByteSegList_BytePosition) { .block_nth = bsl->cursor, .byte_nth = BS_get_cursor(&bsl->array[bsl->cursor]) };
-// }
-//
-// inline void BSL_set_cursor(ByteSegList* bsl, ByteSegList_BytePosition cur) {
-//     bsl->cursor = cur.block_nth;
-//     bsl->array[bsl->cursor].cursor = cur.byte_nth;
-// }
-
 inline ByteSeg BS_new(void) {
     uint8_t* array = calloc(ByteSeg_init_cap, sizeof(uint8_t));
     assert(array != NULL);
@@ -397,30 +287,3 @@ inline size_t BS_get_cursor(ByteSeg* bs) {
 inline void BS_set_cursor(ByteSeg* bs, size_t cursor) {
     bs->cursor = cursor;
 }
-
-
-// --------
-
-//
-// inline ByteSegList BSL_new(void) {
-//     ByteSeg* array = malloc(sizeof(ByteSeg) * ByteSegList_init_cap);
-//     assert(array != NULL);
-//     return (ByteSegList) {
-//         .array = array,
-//         .cap = ByteSegList_init_cap,
-//         .len = 0,
-//         .cursor = 0,
-//     };
-// }
-// inline void BSL_free(ByteSegList* bsl) {
-//        free(bsl->array);
-// }
-//
-// void BSL_write(ByteSegList* bsl, uint8_t val) {
-//     if (bsl->len == 0) {
-//         bsl->array[0] = BS_new();
-//         bsl->len++;
-//     }
-//     BS_write(&bsl->array[bsl->cursor], val);
-// }
-//

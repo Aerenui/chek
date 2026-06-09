@@ -27,8 +27,8 @@ void write64(FILE* f, const uint64_t val) {
 }
 
 /* Round value up to alignment. */
-static uint32_t align_to(uint32_t value, uint32_t alignment) {
-    uint32_t remainder = value % alignment;
+static uint32_t align_to(const uint32_t value, const uint32_t alignment) {
+    const uint32_t remainder = value % alignment;
 
     if (remainder == 0) {
         return value;
@@ -37,21 +37,21 @@ static uint32_t align_to(uint32_t value, uint32_t alignment) {
     return value + (alignment - remainder);
 }
 
-/* Helper — writes exactly 8 bytes for section name */
-static void write_name8(FILE* f, const char* name) {
+// writes exactly 8 bytes for section name
+static void write_name8(FILE* restrict f, const char* restrict name) {
     char buf[8] = {0};
     strncpy(buf, name, 8);
     fwrite(buf, 1, 8, f);
 }
 
 
-void write_win64(const char* path,
-                 uint8_t* code, size_t code_len, uint64_t load_addr,
-                 FunctionsRegistry* fr,
-                 StringViewList* string_consts, StringConstAddrRelocationList* string_consts_relocations,
-                 uint32_t num_sections, StringViewList importing_funcs,
+void write_win64(const char* restrict path,
+                 uint8_t* restrict code, const size_t code_len, const uint64_t load_addr,
+                 const FunctionsRegistry* restrict fr,
+                 const StringViewList* restrict string_consts, const StringConstAddrRelocationList* restrict string_consts_relocations,
+                 const uint32_t num_sections, StringViewList importing_funcs,
                  //uint64_t import_table_load_addr,
-                 size_t bss_size, size_t bss_init_code_len
+                 const size_t bss_size, const size_t bss_init_code_len
 ) {
 
 
@@ -143,7 +143,6 @@ void write_win64(const char* path,
     write8(f, 0);
     write8(f, 0);
 
-    // uint32_t num_sections = 4;
 
     /* COFF header changed for 64-bit */
     write16(f, 0x8664); /* CHANGE: Machine: IMAGE_FILE_MACHINE_AMD64 (was 0x14c) */
@@ -159,58 +158,52 @@ void write_win64(const char* path,
     // printf("bss_size = %lu\n", bss_size);
 
 
-    uint32_t import_dir_table_sz = 2 * IMPORT_DIR_ENTRY_SZ;
+    const uint32_t import_dir_table_sz = 2 * IMPORT_DIR_ENTRY_SZ;
 
     // 1. Calculate the size of your headers
-    uint32_t headers_sz = pe_offset + PE_HDR_SZ + OPT_HDR_SZ + num_sections * SEC_HDR_SZ;
-    // printf("headers_sz = 0x%x\n", headers_sz);
-    // printf("PE_HDR_SZ = %i\n", PE_HDR_SZ);
+    const uint32_t headers_sz = pe_offset + PE_HDR_SZ + OPT_HDR_SZ + num_sections * SEC_HDR_SZ;
 
     // 2. Pre-calculate exact internal .idata sizes
-    uint32_t iat_sz       = (num_imports + 1) * IAT_ENTRY_SZ;
-    uint32_t dir_sz       = 2 * IMPORT_DIR_ENTRY_SZ;
-    uint32_t ilt_sz       = (num_imports + 1) * IMPORT_LOOKUP_TBL_ENTRY_SZ;
-    uint32_t dll_name_sz  = 16;
-    uint32_t idata_sz     = iat_sz + dir_sz + ilt_sz + name_table_sz + dll_name_sz;
+    const uint32_t iat_sz       = (num_imports + 1) * IAT_ENTRY_SZ;
+    const uint32_t dir_sz       = 2 * IMPORT_DIR_ENTRY_SZ;
+    const uint32_t ilt_sz       = (num_imports + 1) * IMPORT_LOOKUP_TBL_ENTRY_SZ;
+    const uint32_t dll_name_sz  = 16;
+    const uint32_t idata_sz     = iat_sz + dir_sz + ilt_sz + name_table_sz + dll_name_sz;
 
     // 3. Map RVAs (Virtual Memory) - .idata comes first!
-    uint32_t idata_rva = align_to(headers_sz, SEC_ALIGN);
+    const uint32_t idata_rva = align_to(headers_sz, SEC_ALIGN);
 
     // NOW you know your exact IAT addresses!
     // Absolute address of first import = image_base + idata_rva
     // Absolute address of second import = image_base + idata_rva + 8
 
-    uint32_t text_rva  = align_to(idata_rva + idata_sz, SEC_ALIGN);
-    uint32_t text_sz   = code_len;
+    const uint32_t text_rva  = align_to(idata_rva + idata_sz, SEC_ALIGN);
+    const uint32_t text_sz   = code_len;
 
-    uint32_t rdata_rva = align_to(text_rva + text_sz, SEC_ALIGN);
-    uint32_t rdata_sz  = string_consts_size;
+    const uint32_t rdata_rva = align_to(text_rva + text_sz, SEC_ALIGN);
+    const uint32_t rdata_sz  = string_consts_size;
 
-    size_t rdata_virt_addr = image_base + rdata_rva;
+    const size_t rdata_virt_addr = image_base + rdata_rva;
     SCARL_resolve(string_consts_relocations, code, rdata_virt_addr, string_consts);
 
     // uint32_t image_sz  = align_to(rdata_rva + rdata_sz, SEC_ALIGN);
 
     // 4. Map File Offsets (Physical Disk)
-    uint32_t idata_offset = align_to(headers_sz, FILE_ALIGN);
-    uint32_t text_offset  = align_to(idata_offset + idata_sz, FILE_ALIGN);
-    uint32_t rdata_offset = align_to(text_offset + text_sz, FILE_ALIGN);
+    const uint32_t idata_offset = align_to(headers_sz, FILE_ALIGN);
+    const uint32_t text_offset  = align_to(idata_offset + idata_sz, FILE_ALIGN);
+    const uint32_t rdata_offset = align_to(text_offset + text_sz, FILE_ALIGN);
 
     // 5. Compute internal .idata layout using the computed idata_rva
-    uint32_t iat_rva                 = idata_rva;
-    uint32_t import_dir_table_rva    = iat_rva + iat_sz;
-    uint32_t import_lookup_table_rva = import_dir_table_rva + dir_sz;
-    uint32_t name_table_rva          = import_lookup_table_rva + ilt_sz;
-    uint32_t dll_name_rva            = name_table_rva + name_table_sz;
+    const uint32_t iat_rva                 = idata_rva;
+    const uint32_t import_dir_table_rva    = iat_rva + iat_sz;
+    const uint32_t import_lookup_table_rva = import_dir_table_rva + dir_sz;
+    const uint32_t name_table_rva          = import_lookup_table_rva + ilt_sz;
+    const uint32_t dll_name_rva            = name_table_rva + name_table_sz;
 
 
-    uint32_t bss_rva = align_to(rdata_rva + rdata_sz, SEC_ALIGN);
-    // uint32_t bss_sz  = 0;
-    uint32_t bss_sz  = (uint32_t)bss_size;  // was hardcoded 0
-    // printf("bss_sz = %u\n", bss_sz);
-    uint32_t image_sz = align_to(bss_rva + bss_sz, SEC_ALIGN);
-
-    // uint32_t image_sz = align_to(bss_rva + bss_sz, SEC_ALIGN);
+    const uint32_t bss_rva = align_to(rdata_rva + rdata_sz, SEC_ALIGN);
+    const uint32_t bss_sz  = (uint32_t)bss_size;
+    const uint32_t image_sz = align_to(bss_rva + bss_sz, SEC_ALIGN);
 
 
     /* Optional header, part 1: standard fields */
@@ -282,12 +275,8 @@ void write_win64(const char* path,
     write32(f, 0); /* (Reserved). */
 
 
-
-
-
     /* --- Section headers (PE IMAGE_SECTION_HEADER, 40 bytes each) --- */
 
-    // 1. .idata is now first
     write_name8(f, ".idata");
     write32(f, idata_sz);
     write32(f, idata_rva);
@@ -297,7 +286,6 @@ void write_win64(const char* path,
     write16(f, 0); write16(f, 0);
     write32(f, 0xC0000040); /* INITIALIZED_DATA | READ | WRITE */
 
-    // 2. .text comes second
     write_name8(f, ".text");
     write32(f, text_sz);
     write32(f, text_rva);
@@ -307,7 +295,6 @@ void write_win64(const char* path,
     write16(f, 0); write16(f, 0);
     write32(f, 0x60000020); /* CODE | EXECUTE | READ */
 
-    // 3. .rdata comes third
     write_name8(f, ".rdata");
     write32(f, rdata_sz);
     write32(f, rdata_rva);
@@ -318,7 +305,6 @@ void write_win64(const char* path,
     write32(f, 0x40000040); /* INITIALIZED_DATA | READ */
 
 
-    // assert(bss_sz == 8);
     write_name8(f, ".bss");
     write32(f, bss_sz);
     write32(f, bss_rva);
@@ -342,7 +328,6 @@ void write_win64(const char* path,
         nt_offset += (uint32_t)esz;
     }
 
-    // printf("idata_offset = 0x%x\n", idata_offset);
     /* --- .idata --- */
     fseek(f, idata_offset, SEEK_SET);
 
@@ -379,30 +364,23 @@ void write_win64(const char* path,
 
 
 
-    size_t bss_virt_addr = bss_rva + image_base;
-    // printf("bss_virt_addr = 0x%lx\n", bss_virt_addr);
+    const size_t bss_virt_addr = bss_rva + image_base;
     resolve_globals(code, bss_virt_addr, &globals_registry, &global_patch_list);
-    resolve_globals(code + (code_len - bss_init_code_len), bss_virt_addr, &globals_registry, &global_patch_list_inicializer);
+    resolve_globals(code + (code_len - bss_init_code_len), bss_virt_addr, &globals_registry, &global_patch_list_initializer);
 
 
-    // printf("text_offset = 0x%x\n", text_offset);
     /* --- .text --- */
     fseek(f, text_offset, SEEK_SET);
     fwrite(code, 1, code_len, f);
 
-    // printf("rdata_offset = 0x%x\n", rdata_offset);
     /* --- .rdata --- */
     fseek(f, rdata_offset, SEEK_SET);
     fwrite(string_consts_array, 1, string_consts_size, f);
 
-    // fseek(f, rdata_offset+0x512, SEEK_SET);
-    // write8(f, 0);
-
-
 
     // After all section data is written, record the offset
-    uint32_t symtab_offset = align_to(rdata_offset + align_to(rdata_sz, FILE_ALIGN), FILE_ALIGN);
-    uint32_t num_symbols = fr->len;
+    const uint32_t symtab_offset = align_to(rdata_offset + align_to(rdata_sz, FILE_ALIGN), FILE_ALIGN);
+    const uint32_t num_symbols = fr->len;
 
     // Build string table
     size_t strtab_len = 4; // first 4 bytes = size field itself

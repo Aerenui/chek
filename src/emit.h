@@ -112,9 +112,9 @@ void LL_push(LabelList*, Label);
 
 // -----------------------------------------------------------------------------------------
 
-void emit_jmp_label(ByteSeg* buf, RelocationList* rels, StringView label);
+// void emit_jmp_label(ByteSeg* buf, RelocationList* rels, StringView label);
 
-void emit_je_label(ByteSeg* buf, RelocationList* rels, StringView label);
+// void emit_je_label(ByteSeg* buf, RelocationList* rels, StringView label);
 
 // -----------------------------------------------------------------------------------------
 
@@ -151,16 +151,16 @@ typedef struct {
 
 
 FunctionsRegistry FR_new(void);
-void FR_free(FunctionsRegistry*);
+void FR_free(const FunctionsRegistry*);
 void FR_register_function(FunctionsRegistry*, Function);
-void FR_overwrite_function(FunctionsRegistry*, Function);
-bool FR_has_function(FunctionsRegistry*, StringView);
-Function FR_lookup_function(FunctionsRegistry*, StringView);
+void FR_overwrite_function(const FunctionsRegistry*, Function);
+bool FR_has_function(const FunctionsRegistry*, StringView);
+Function FR_lookup_function(const FunctionsRegistry*, StringView);
 
 
 FunctionCallPatchList FCPL_new(void);
-void FCPL_free(FunctionCallPatchList*);
-void FCPL_register_pach(FunctionCallPatchList*, FunctionCallPatch);
+void FCPL_free(const FunctionCallPatchList*);
+void FCPL_register_patch(FunctionCallPatchList*, FunctionCallPatch);
 
 // -----------------------------------------------------------------------------------------
 
@@ -193,15 +193,15 @@ typedef struct {
 
 
 GlobalsRegistry GR_new(void);
-void GR_free(GlobalsRegistry*);
+void GR_free(const GlobalsRegistry*);
 size_t GR_register_global(GlobalsRegistry*, Global);
-bool GR_has_global(GlobalsRegistry*, StringView);
-Global GR_lookup_global(GlobalsRegistry*, StringView);
-size_t GR_lookup_global_index(GlobalsRegistry*, StringView);
+bool GR_has_global(const GlobalsRegistry*, StringView);
+Global GR_lookup_global(const GlobalsRegistry*, StringView);
+size_t GR_lookup_global_index(const GlobalsRegistry*, StringView);
 
 
 GlobalPatchList GPL_new(void);
-void GPL_free(GlobalPatchList*);
+void GPL_free(const GlobalPatchList*);
 void GPL_register_patch(GlobalPatchList*, GlobalPatch);
 
 
@@ -222,9 +222,9 @@ typedef struct {
 
 StringConstAddrRelocationList SCARL_new(void);
 void SCARL_push(StringConstAddrRelocationList*, StringConstAddrRelocation);
-void SCARL_free(StringConstAddrRelocationList*);
+void SCARL_free(const StringConstAddrRelocationList*);
 
-void SCARL_resolve(StringConstAddrRelocationList*, uint8_t*, uint64_t, StringViewList*);
+void SCARL_resolve(const StringConstAddrRelocationList*, uint8_t*, uint64_t, const StringViewList*);
 
 // -----------------------------------------------------------------------------------------
 
@@ -235,8 +235,8 @@ void emit_imul_eax(ByteSeg* out, Loc src, GlobalPatchList* gpl, CompilerTarget t
 
 // -----------------------------------------------------------------------------------------
 
-void resolve_relocations(ByteSeg*, RelocationList*, LabelList*);
-void resolve_function_calls(uint8_t* array, size_t local_code_size, FunctionsRegistry*, FunctionCallPatchList*);
-void resolve_globals(uint8_t* array, size_t bss_base_addr, GlobalsRegistry*, GlobalPatchList*);
+void resolve_relocations(const ByteSeg*, const RelocationList*, const LabelList*);
+void resolve_function_calls(uint8_t* array, size_t local_code_size, const FunctionsRegistry*, const FunctionCallPatchList*);
+void resolve_globals(uint8_t* array, size_t bss_base_addr, const GlobalsRegistry*, const GlobalPatchList*);
 
 #endif //SIMPLECOMPILERINC_2_EMIT_H

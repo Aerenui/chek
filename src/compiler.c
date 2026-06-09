@@ -3,9 +3,9 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
-// #include <linux/limits.h>
 #include <limits.h>
+
+#include "error.h"
 #ifndef PATH_MAX
 #define PATH_MAX 260
 #endif
@@ -22,54 +22,95 @@
 #include "utils.h"
 #include "target_specific/win_gen.h"
 
-size_t tmp_cnt = 0;
+
+// a counter for generating unique IDs for if/while labels and their relocations
 size_t label_cnt = 0;
+
+// output buffer for compilation of all functions
 ByteSeg code_output_funcs;
+
+// output buffer for globals initialization code
 ByteSeg code_output_globals;
+
+// pointer to current output buffer
 ByteSeg* code_output;
+
+// list of relocations to be patched
 RelocationList relocations;
+
+// list of labes used in patching relocations
 LabelList labels;
 
+// registry of all compiled functions, used for function calls and entry point
 static FunctionsRegistry functions_registry;
+
+// list of unresolved call sites to be patched after everything is compiled
 FunctionCallPatchList function_patch_list;
 
+// registry of all declared global variables and their offsets
 GlobalsRegistry globals_registry;
-GlobalPatchList global_patch_list_inicializer;
+
+// global address patches for regular function bodies
 GlobalPatchList global_patch_list;
 
+// global address patches for the global initializer code (__global function)
+GlobalPatchList global_patch_list_initializer;
+
+// source imports tracking to prevent duplicate compilation and name collisions
 static StringViewList import_table;
+
+// string literal constants (written into .rodata), used by runtime errors only
 static StringViewList string_consts;
+
+// relocations for string literal constants
 static StringConstAddrRelocationList string_consts_relocations;
 
-char* * content_ptrs;
+// list of pointers to be freed after compilation but are out of normal allocations
+char** content_ptrs;
 size_t content_ptrs_len = 0;
 size_t content_ptrs_cap = 4;
 
-void get_stmt(StringViewListView*, bool, CompilerTarget);
+// source map for the file currently being compiled
+// used for printing errors
+SourceMap source_map;
 
-bool is_operator(char);
-
-
+// next free offset in the BSS segment
+// used for globals
 static size_t bss_alloc_next = 0;
 
-size_t alloc_bss_space(uint8_t byte_size) {
-    if (bss_alloc_next == 0) {
-        bss_alloc_next = byte_size;
-    }
-    size_t ret = bss_alloc_next;
-    bss_alloc_next += byte_size;
-    return ret;
-}
-
+// stack frame for function compilation
+// is reset after each function is compiled
 static StackFrame frame = {
     .next_offset = 4,
     .peek = 0
 };
 
+// stack frame used for globals initialization (__global function)
+// needed because global declarations supports full expressions
 StackFrame global_frame = {
     .next_offset = 4,
     .peek = 0
 };
+
+// list of local variables
+// looked up in reverse to allow variable shadowing
+static VarEntry* var_table;
+static size_t var_table_cap;
+static size_t var_table_length = 0;
+
+// label ID for the end of the current function
+// used to patch return statements
+static size_t function_end_id;
+
+
+size_t alloc_bss_space(const uint8_t byte_size) {
+    if (bss_alloc_next == 0) {
+        bss_alloc_next = byte_size;
+    }
+    const size_t ret = bss_alloc_next;
+    bss_alloc_next += byte_size;
+    return ret;
+}
 
 StackFrame* get_frame(void) {
     return &frame;
@@ -89,28 +130,27 @@ int alloc_tmp_stack_slot(StackFrame* f) {
     return slot;
 }
 
-int get_stack_frame_max(StackFrame* f) {
+int get_stack_frame_max(const StackFrame* f) {
     if (f->next_offset < f->peek)
         return f->peek;
     return f->next_offset;
 }
 
-/// returns offset
-size_t add_str_const(StringView sv) {
+// returns offset
+size_t add_str_const(const StringView sv) {
     SVL_p_push(&string_consts, sv);
     return string_consts.len - 1;
 }
 
-static VarEntry* var_table;
-static size_t var_table_cap;
-static size_t var_table_length = 0;
 
-static size_t function_end_id;
+void get_stmt(StringViewListView*, bool, CompilerTarget);
+
+bool is_operator(char);
 
 int lookup_var(StringView name) {
     for (size_t i = var_table_length; i-- > 0;) {
         // reversed to find the most inner one
-        if (SV__pp_cmp_eq(&var_table[i].name, &name))
+        if (SV_pp_cmp_eq(&var_table[i].name, &name))
             return var_table[i].offset;
     }
     // not found — should not happen if the parser is correct
@@ -118,14 +158,14 @@ int lookup_var(StringView name) {
     exit(1);
 }
 
-bool exists_var(StringView name) {
+bool exists_var(const StringView name) {
     // printf("exists_var('%.*s') - var_table_length = %li\n", (int)name.len, name.start, var_table_length);
     if (var_table_length == 0) {
         return false;
     }
     for (size_t i = var_table_length; i-- > 0;) {
         // reversed to find the most inner one
-        if (SV__pp_cmp_eq(&var_table[i].name, &name))
+        if (SV_pp_cmp_eq(&var_table[i].name, &name))
             return true;
     }
     return false;
@@ -143,39 +183,6 @@ int declare_var(StringView name) {
     return slot;
 }
 
-
-/*StringViewList p_tokenize(const StringView* sv) {
-    StringViewList ot = SVL_new();
-    size_t i = 0;
-    while (i < sv->len) {
-        // skip whitespace
-        if (sv->start[i] == ' ' || sv->start[i] == '\n' || sv->start[i] == '\t') {
-            i++;
-            continue;
-        }
-        // single-char tokens: operators, parens, semicolons
-        if (is_operator(sv->start[i]) || sv->start[i] == '(' ||
-            // sv->start[i] == '=' || sv->start[i] == '<' || sv->start[i] == '>' ||
-            sv->start[i] == ')' || sv->start[i] == ';' || sv->start[i] == ',' ||
-            sv->start[i] == ':') {
-            SVL_p_push(&ot, SV_lrslice_from_SV(sv, i, 1));
-            i++;
-            continue;
-        }
-        // multi-char tokens: identifiers and integer literals
-        size_t start = i;
-        while (i < sv->len &&
-               sv->start[i] != ' ' && sv->start[i] != '\t' && sv->start[i] != '\n' &&
-               !is_operator(sv->start[i]) &&
-               sv->start[i] != '(' && sv->start[i] != ')' &&
-               sv->start[i] != ';' && sv->start[i] != ':' && sv->start[i] != ',') {
-            // && sv->start[i] != '='
-            i++;
-        }
-        SVL_p_push(&ot, SV_lrslice_from_SV(sv, start, i - start));
-    }
-    return ot;
-}*/
 
 StringViewList p_tokenize(const StringView* sv) {
     StringViewList ot = SVL_new();
@@ -197,9 +204,9 @@ StringViewList p_tokenize(const StringView* sv) {
             continue;
         }
         if (sv->start[i] == '"') {
-            size_t start = i;
+            const size_t start = i;
             i++;
-            while (i < sv->len && sv->start[i] != '"') {
+            while (i < sv->len && sv->start[i] != '"' && sv->start[i] != '\n' && sv->start[i] != 0) {
                 if (sv->start[i] == '\\') i++;
                 i++;
             }
@@ -224,12 +231,12 @@ StringViewList p_tokenize(const StringView* sv) {
 bool is_stmt_next(StringViewListView* view) {
     if (view->len < 1) return false;
     StringView s1 = SVLV_inspect_back(view);
-    if (SV__pv_cmp_eq(&s1, "int", 3)) return true;
-    if (SV__pv_cmp_eq(&s1, "set", 3)) return true;
-    if (SV__pv_cmp_eq(&s1, "if", 2)) return true;
-    if (SV__pv_cmp_eq(&s1, "while", 5)) return true;
-    if (SV__pv_cmp_eq(&s1, "print", 5)) return true;
-    if (SV__pv_cmp_eq(&s1, "call", 4)) return true;
+    if (SV_pv_cmp_eq(&s1, "int", 3)) return true;
+    if (SV_pv_cmp_eq(&s1, "set", 3)) return true;
+    if (SV_pv_cmp_eq(&s1, "if", 2)) return true;
+    if (SV_pv_cmp_eq(&s1, "while", 5)) return true;
+    if (SV_pv_cmp_eq(&s1, "print", 5)) return true;
+    if (SV_pv_cmp_eq(&s1, "call", 4)) return true;
 
     return false;
 }
@@ -237,39 +244,40 @@ bool is_stmt_next(StringViewListView* view) {
 bool is_stmt_next_return(StringViewListView* view) {
     if (view->len < 1) return false;
     StringView s1 = SVLV_inspect_back(view);
-    if (SV__pv_cmp_eq(&s1, "return", 6)) return true;
+    if (SV_pv_cmp_eq(&s1, "return", 6)) return true;
 
     return false;
 }
 
 
 void get_semicolon(StringViewListView* view) {
-    StringView semicolon = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&semicolon, ";", 1)) {
-        // error
-        fprintf(stderr, "[ERROR] expected ';', got '%.*s'\n", (int) semicolon.len, semicolon.start);
+    const StringView last_token = view->array[-1];
+    const StringView semicolon = SVLV_consume_one(view);
+    if (!SV_pv_cmp_eq(&semicolon, ";", 1)) {
+        const char* error_pos = last_token.start + last_token.len;
+        while (*error_pos == ' ' || *error_pos == '\t') error_pos++;
+        srcmap_error(&source_map, error_pos, "expected ';'");
         exit(1);
     }
 }
 
-void get_return_stmt(StringViewListView* view, bool should_return_value, CompilerTarget target) {
-    StringView ret_keyword = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&ret_keyword, "return", 6)) {
+void get_return_stmt(StringViewListView* view, const bool should_return_value, const CompilerTarget target) {
+    const StringView ret_keyword = SVLV_consume_one(view);
+    if (!SV_pv_cmp_eq(&ret_keyword, "return", 6)) {
         fprintf(stderr, "[ERROR] <internal> should not happen | get_return_stmt and no return token\n");
         exit(1);
     }
 
     StringView semi_or_val = SVLV_inspect_back(view);
-    if (SV__pv_cmp_eq(&semi_or_val, ";", 1)) {
+    if (SV_pv_cmp_eq(&semi_or_val, ";", 1)) {
         if (should_return_value) {
-            fprintf(stderr, "[ERROR] unexpected ';' for int function, expected value\n");
+            srcmap_error(&source_map, semi_or_val.start, "unexpected ';' for int function, expected return value");
             exit(1);
         }
         SVLV_consume_one(view);
     } else {
         if (!should_return_value) {
-            fprintf(stderr, "[ERROR] expected ';' for void function, got '%.*s'\n", (int) semi_or_val.len,
-                    semi_or_val.start);
+            srcmap_error(&source_map, semi_or_val.start, "expected ';' for void function, got '%.*s'", (int)semi_or_val.len, semi_or_val.start);
             exit(1);
         }
         Loc val = get_int_expr(view, target, true);
@@ -292,7 +300,7 @@ void get_return_stmt(StringViewListView* view, bool should_return_value, Compile
 }
 
 
-void get_stmt_block(StringViewListView* view, bool should_return_value, CompilerTarget target) {
+void get_stmt_block(StringViewListView* view, const bool should_return_value, const CompilerTarget target) {
     while (view->len > 0) {
         if (is_stmt_next_return(view)) {
             get_return_stmt(view, should_return_value, target);
@@ -304,20 +312,18 @@ void get_stmt_block(StringViewListView* view, bool should_return_value, Compiler
 }
 
 
-void get_int_var_dec(StringViewListView* view, CompilerTarget target) {
+void get_int_var_dec(StringViewListView* view, const CompilerTarget target) {
     StringView var_name = SVLV_consume_one(view);
     int slot = declare_var(var_name);
 
     StringView assign = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&assign, ":", 1)) {
+    if (!SV_pv_cmp_eq(&assign, ":", 1)) {
         // error
-        fprintf(stderr, "[ERROR] expected ':' in variable declaration, got '%.*s'\n", (int) assign.len, assign.start);
+        srcmap_error(&source_map, assign.start, "expected ':' in variable declaration, got '%.*s'", (int)assign.len, assign.start);
         exit(1);
     }
-    // printf("  %%var_%.*s = alloca i32, align 4\n", (int) var_name.len, var_name.start);
 
     Loc last = get_int_expr(view, target, true);
-    // printf("  store i32 %.*s, ptr %%var_%.*s, align 4\n", (int) last.len, last.start, (int) var_name.len, var_name.start);
 
     // move last into eax
     emit_mov_eax(code_output, last, &global_patch_list, target);
@@ -330,8 +336,8 @@ void get_int_var_dec(StringViewListView* view, CompilerTarget target) {
     get_semicolon(view);
 }
 
-void get_int_var_set(StringViewListView* view, CompilerTarget target) {
-    StringView var_name = SVLV_consume_one(view);
+void get_int_var_set(StringViewListView* view, const CompilerTarget target) {
+    const StringView var_name = SVLV_consume_one(view);
     int slot = -1;
     // Global global;
     bool is_local = false;
@@ -339,21 +345,19 @@ void get_int_var_set(StringViewListView* view, CompilerTarget target) {
         is_local = true;
         slot = lookup_var(var_name);
     } else if (GR_has_global(&globals_registry,var_name)) {
-        // global = GR_lookup_global(&globals_registry, var_name);
     } else {
-        fprintf(stderr, "[ERROR] undeclared variable '%.*s'\n", (int)var_name.len, var_name.start);
+        srcmap_error(&source_map, var_name.start, "undefined variable '%.*s'", (int)var_name.len, var_name.start);
         exit(1);
     }
 
     StringView assign = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&assign, ":", 1)) {
+    if (!SV_pv_cmp_eq(&assign, ":", 1)) {
         // error
-        fprintf(stderr, "[ERROR] expected ':' in variable change, got '%.*s'\n", (int) assign.len, assign.start);
+        srcmap_error(&source_map, assign.start, "expected ':' in variable change, got '%.*s'", (int)assign.len, assign.start);
         exit(1);
     }
 
     Loc last = get_int_expr(view, target, true);
-    // printf("  store i32 %.*s, ptr %%var_%.*s, align 4\n", (int) last.len, last.start, (int) var_name.len, var_name.start);
 
 
     // move last into eax
@@ -411,50 +415,13 @@ void get_int_var_set(StringViewListView* view, CompilerTarget target) {
     get_semicolon(view);
 }
 
-/*void get_if_conditional(StringViewListView* view) {
-    const Loc cond = get_int_expr(view);
 
-    StringView then = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&then, "then", 4)) {
-        fprintf(stderr, "[ERROR] expected 'then' after expression in if conditional, got '%.*s'\n", (int) then.len,
-                then.start);
-        exit(1);
-    }
-
-    const size_t tmp = tmp_cnt;
-    tmp_cnt++;
-    // printf("  %%cond_%lu = icmp ne i32 %.*s, 0\n", tmp, (int) cond.len, cond.start);
-    // printf("  br i1 %%cond_%lu, label %%if_then_%lu, label %%if_else_%lu\n", tmp, tmp, tmp);
-    // printf("if_then_%lu:\n", tmp);
-
-    get_stmt_block(view);
-
-    // printf("  br label %%if_end_%lu\n", tmp);
-    // printf("if_else_%lu:\n", tmp);
-
-    StringView else_keyword = SVLV_inspect_back(view);
-    if (SV__pv_cmp_eq(&else_keyword, "else", 4)) {
-        SVLV_consume_one(view);
-        get_stmt_block(view);
-    }
-
-    // printf("  br label %%if_end_%lu\n", tmp);
-    // printf("if_end_%lu:\n", tmp);
-
-    StringView end = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&end, "end", 3)) {
-        fprintf(stderr, "[ERROR] expected 'end' after if conditional, got '%.*s'\n", (int) end.len, end.start);
-        exit(1);
-    }
-}*/
-
-void get_if_conditional(StringViewListView* view, bool should_return_value, CompilerTarget target) {
+void get_if_conditional(StringViewListView* view, const bool should_return_value, const CompilerTarget target) {
     const Loc cond = get_int_expr(view, target, true);
 
     StringView then = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&then, "then", 4)) {
-        fprintf(stderr, "[ERROR] expected 'then' after expression in if conditional, got '%.*s'\n", (int) then.len,
-                then.start);
+    if (!SV_pv_cmp_eq(&then, "then", 4)) {
+        srcmap_error(&source_map, then.start, "expected 'then' after expression in if conditional, got '%.*s'", (int)then.len, then.start);
         exit(1);
     }
 
@@ -477,13 +444,13 @@ void get_if_conditional(StringViewListView* view, bool should_return_value, Comp
                 .kind = REL_ELSE,
             });
 
-    int frame_mext_offset_snapshot = get_frame()->next_offset;
-    size_t var_tale_length_snapshot = var_table_length;
+    const int frame_next_offset_snapshot = get_frame()->next_offset;
+    const size_t var_table_length_snapshot = var_table_length;
 
     get_stmt_block(view, should_return_value, target);
 
     StringView else_keyword = SVLV_inspect_back(view);
-    if (SV__pv_cmp_eq(&else_keyword, "else", 4)) {
+    if (SV_pv_cmp_eq(&else_keyword, "else", 4)) {
         SVLV_consume_one(view);
 
         // JMP end_<id> (placeholder)
@@ -512,17 +479,17 @@ void get_if_conditional(StringViewListView* view, bool should_return_value, Comp
     LL_push(&labels, (Label){.offset = BS_get_cursor(code_output), .id = id, .kind = REL_END});
 
     StringView end = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&end, "end", 3)) {
-        fprintf(stderr, "[ERROR] expected 'end' after if conditional, got '%.*s'\n", (int) end.len, end.start);
+    if (!SV_pv_cmp_eq(&end, "end", 3)) {
+        srcmap_error(&source_map, end.start, "expected 'end' after if conditional, got '%.*s'", (int)end.len, end.start);
         exit(1);
     }
 
 
-    get_frame()->next_offset = frame_mext_offset_snapshot;
-    var_table_length = var_tale_length_snapshot;
+    get_frame()->next_offset = frame_next_offset_snapshot;
+    var_table_length = var_table_length_snapshot;
 }
 
-void get_while_conditional(StringViewListView* view, bool should_return_value, CompilerTarget target) {
+void get_while_conditional(StringViewListView* view, const bool should_return_value, const CompilerTarget target) {
     const size_t id = label_cnt++;
 
     // define loop_<id> (loop back target)
@@ -531,9 +498,8 @@ void get_while_conditional(StringViewListView* view, bool should_return_value, C
     const Loc cond = get_int_expr(view, target, true);
 
     StringView do_keyword = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&do_keyword, "do", 2)) {
-        fprintf(stderr, "[ERROR] expected 'do' after expression in while conditional, got '%.*s'\n",
-                (int) do_keyword.len, do_keyword.start);
+    if (!SV_pv_cmp_eq(&do_keyword, "do", 2)) {
+        srcmap_error(&source_map, do_keyword.start, "expected 'do' after expression in while conditional, got '%.*s'", (int)do_keyword.len, do_keyword.start);
         exit(1);
     }
 
@@ -574,14 +540,14 @@ void get_while_conditional(StringViewListView* view, bool should_return_value, C
     LL_push(&labels, (Label){.offset = BS_get_cursor(code_output), .id = id, .kind = REL_END});
 
     StringView end = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&end, "end", 3)) {
-        fprintf(stderr, "[ERROR] expected 'end' after while conditional, got '%.*s'\n", (int) end.len, end.start);
+    if (!SV_pv_cmp_eq(&end, "end", 3)) {
+        srcmap_error(&source_map, end.start, "expected 'end' after while conditional, got '%.*s'", (int)end.len, end.start);
         exit(1);
     }
 }
 
 // messses stack
-void get_print_stmt(StringViewListView* view, CompilerTarget target) {
+void get_print_stmt(StringViewListView* view, const CompilerTarget target) {
     while (view->len > 0) {
         StringView inspect = SVLV_inspect_back(view);
         if (inspect.start[0] == ';') {
@@ -600,8 +566,6 @@ void get_print_stmt(StringViewListView* view, CompilerTarget target) {
 
                 // mov [rbp - offset], eax
                 int offset = alloc_tmp_stack_slot(&frame);
-                // int offset = frame.next_offset;
-                // frame.next_offset += 4;
 
 
                 if (target == F_Elf64) {
@@ -791,34 +755,32 @@ void get_print_stmt(StringViewListView* view, CompilerTarget target) {
 
 #define MAX_ARGS 6
 
-void get_function_call_stmt(StringViewListView* view, CompilerTarget target) {
+void get_function_call_stmt(StringViewListView* view, const CompilerTarget target) {
     StringView f_name = SVLV_consume_one(view);
     if (!FR_has_function(&functions_registry, f_name)) {
-        fprintf(stderr, "[ERROR] function '%.*s' not found\n", (int) f_name.len, f_name.start);
+        srcmap_error(&source_map, f_name.start, "function '%.*s' not found", (int)f_name.len, f_name.start);
         exit(1);
     }
     Function f = FR_lookup_function(&functions_registry, f_name);
 
     StringView lbracket = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&lbracket, "(", 1)) {
-        fprintf(stderr, "[ERROR] expected '(' after function name in function call, got '%.*s'\n", (int) lbracket.len,
-                lbracket.start);
+    if (!SV_pv_cmp_eq(&lbracket, "(", 1)) {
+        srcmap_error(&source_map, lbracket.start, "expected '(' after function name in function call, got '%.*s'", (int)lbracket.len, lbracket.start);
         exit(1);
     }
 
 
     uint8_t expected_args = f.arg_count;
     if (expected_args > MAX_ARGS) {
-        fprintf(stderr, "[ERROR] function '%.*s' declared with %i arguments, but only at most %i are supported\n",
-                (int) f_name.len, f_name.start, f.arg_count, MAX_ARGS);
+        srcmap_error(&source_map, f_name.start, "function '%.*s' declared with %i arguments, but only at most %i are supported", (int)f_name.len, f_name.start, f.arg_count, MAX_ARGS);
         exit(1);
     }
     int* args_items = malloc(sizeof(int) * f.arg_count);
 
     while (expected_args > 0) {
         StringView inspect = SVLV_inspect_back(view);
-        if (SV__pv_cmp_eq(&inspect, ")", 1)) {
-            fprintf(stderr, "[ERROR] unexpected ')' function call, expected another %u arguments\n", expected_args);
+        if (SV_pv_cmp_eq(&inspect, ")", 1)) {
+            srcmap_error(&source_map, f_name.start, "unexpected ')' in function '%.*s' call, expected another %u argument%c", (int)f_name.len, f_name.start, expected_args, expected_args > 1 ? 's' : ' ');
             exit(1);
         }
         int slot = alloc_stack_slot(&frame); // alloc_tmp_stack_slot
@@ -838,17 +800,16 @@ void get_function_call_stmt(StringViewListView* view, CompilerTarget target) {
         expected_args--;
         if (expected_args > 0) {
             StringView comma = SVLV_consume_one(view);
-            if (!SV__pv_cmp_eq(&comma, ",", 1)) {
-                fprintf(stderr, "[ERROR] expected ',' function call args, got '%.*s'\n", (int) comma.len, comma.start);
+            if (!SV_pv_cmp_eq(&comma, ",", 1)) {
+                srcmap_error(&source_map, comma.start, "expected ',' function call args, got '%.*s'", (int)comma.len, comma.start);
                 exit(1);
             }
         }
     }
 
     StringView rbracket = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&rbracket, ")", 1)) {
-        fprintf(stderr, "[ERROR] function <%.*s>: expected ')' function call after args, got '%.*s'\n",
-                (int) f_name.len, f_name.start, (int) rbracket.len, rbracket.start);
+    if (!SV_pv_cmp_eq(&rbracket, ")", 1)) {
+        srcmap_error(&source_map, rbracket.start, "in function '%.*s' call, expected ')' function call after args, got '%.*s'", (int) f_name.len, f_name.start, (int)rbracket.len, rbracket.start);
         exit(1);
     }
 
@@ -888,7 +849,7 @@ void get_function_call_stmt(StringViewListView* view, CompilerTarget target) {
         0xe8, 0x00, 0x00, 0x00, 0x00, //          call <>
     };
     BS_write_array(code_output, sizeof(call), call);
-    FCPL_register_pach(&function_patch_list, (FunctionCallPatch){
+    FCPL_register_patch(&function_patch_list, (FunctionCallPatch){
                            .name = f.name,
                            .offset = pos,
                            .relative = true,
@@ -899,10 +860,10 @@ void get_function_call_stmt(StringViewListView* view, CompilerTarget target) {
 
     if (f.returns_value) {
         StringView semi_or_into = SVLV_inspect_back(view);
-        if (SV__pv_cmp_eq(&semi_or_into, ";", 1)) {
+        if (SV_pv_cmp_eq(&semi_or_into, ";", 1)) {
             get_semicolon(view);
             printf("[warning] discarding return value of function <%.*s>\n", (int) f.name.len, f.name.start);
-        } else if (SV__pv_cmp_eq(&semi_or_into, "into", 4)) {
+        } else if (SV_pv_cmp_eq(&semi_or_into, "into", 4)) {
             SVLV_consume_one(view); // into
             StringView into_var = SVLV_consume_one(view);
             int slot = lookup_var(into_var);
@@ -913,8 +874,7 @@ void get_function_call_stmt(StringViewListView* view, CompilerTarget target) {
 
             get_semicolon(view);
         } else {
-            fprintf(stderr, "[ERROR] expected either ';' or 'into' after function call, got '%.*s'\n",
-                    (int) semi_or_into.len, semi_or_into.start);
+            srcmap_error(&source_map, semi_or_into.start, "expected either ';' or 'into' after function call, got '%.*s'", (int)semi_or_into.len, semi_or_into.start);
             exit(1);
         }
     } else {
@@ -922,26 +882,26 @@ void get_function_call_stmt(StringViewListView* view, CompilerTarget target) {
     }
 }
 
-void get_stmt(StringViewListView* view, bool should_return_value, CompilerTarget target) {
+void get_stmt(StringViewListView* view, const bool should_return_value, const CompilerTarget target) {
     StringView s1 = SVLV_consume_one(view);
-    if (SV__pv_cmp_eq(&s1, "int", 3)) {
+    if (SV_pv_cmp_eq(&s1, "int", 3)) {
         get_int_var_dec(view, target);
-    } else if (SV__pv_cmp_eq(&s1, "set", 3)) {
+    } else if (SV_pv_cmp_eq(&s1, "set", 3)) {
         get_int_var_set(view, target);
-    } else if (SV__pv_cmp_eq(&s1, "if", 2)) {
+    } else if (SV_pv_cmp_eq(&s1, "if", 2)) {
         get_if_conditional(view, should_return_value, target);
-    } else if (SV__pv_cmp_eq(&s1, "while", 5)) {
+    } else if (SV_pv_cmp_eq(&s1, "while", 5)) {
         get_while_conditional(view, should_return_value, target);
-    } else if (SV__pv_cmp_eq(&s1, "print", 5)) {
+    } else if (SV_pv_cmp_eq(&s1, "print", 5)) {
         get_print_stmt(view, target);
-    } else if (SV__pv_cmp_eq(&s1, "call", 4)) {
+    } else if (SV_pv_cmp_eq(&s1, "call", 4)) {
         get_function_call_stmt(view, target);
     } else {
         printf("STMT: unknown\n");
     }
 }
 
-void get_function(StringViewListView* view, CompilerTarget target) {
+void get_function(StringViewListView* view, const CompilerTarget target) {
     size_t f_start_cursor = BS_get_cursor(code_output);
 
     create_frame();
@@ -951,37 +911,37 @@ void get_function(StringViewListView* view, CompilerTarget target) {
 
     StringView ret_type = SVLV_consume_one(view);
     bool returns_value = false;
-    if (SV__pv_cmp_eq(&ret_type, "int", 3)) {
+    if (SV_pv_cmp_eq(&ret_type, "int", 3)) {
         returns_value = true;
-    } else if (SV__pv_cmp_eq(&ret_type, "void", 4)) {
+    } else if (SV_pv_cmp_eq(&ret_type, "void", 4)) {
     } else {
-        fprintf(stderr, "[ERROR] unexpected token '%.*s'\n", (int) ret_type.len, ret_type.start);
+        srcmap_error(&source_map, ret_type.start, "expected either 'int' or 'void' as return type, got '%.*s'", (int)ret_type.len, ret_type.start);
         exit(1);
     }
 
     StringView f_name = SVLV_consume_one(view);
 
     StringView f_args_start = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&f_args_start, "(", 1)) {
-        fprintf(stderr, "[ERROR] expected '(', got '%.*s'\n", (int) f_args_start.len, f_args_start.start);
+    if (!SV_pv_cmp_eq(&f_args_start, "(", 1)) {
+        srcmap_error(&source_map, f_args_start.start, "expected '(', got '%.*s'", (int)f_args_start.len, f_args_start.start);
         exit(1);
     }
 
     StringViewList f_args = SVL_new();
     while (true) {
         StringView s = SVLV_consume_one(view);
-        if (SV__pv_cmp_eq(&s, ")", 1)) {
+        if (SV_pv_cmp_eq(&s, ")", 1)) {
             break;
         }
         SVL_p_push(&f_args, s);
 
         StringView comma = SVLV_consume_one(view);
-        if (SV__pv_cmp_eq(&comma, ")", 1)) {
+        if (SV_pv_cmp_eq(&comma, ")", 1)) {
             break;
-        } else if (SV__pv_cmp_eq(&comma, ",", 1)) {
+        } else if (SV_pv_cmp_eq(&comma, ",", 1)) {
             // ok
         } else {
-            fprintf(stderr, "[ERROR] expected comma or ')', got '%.*s'\n", (int) comma.len, comma.start);
+            srcmap_error(&source_map, comma.start, "expected ',' or ')', got '%.*s'", (int)comma.len, comma.start);
             exit(1);
         }
     }
@@ -1004,7 +964,6 @@ void get_function(StringViewListView* view, CompilerTarget target) {
     };
     BS_write_array(code_output, 8, prologue);
     size_t prologue_frame_override_pos = BS_get_cursor(code_output) - 1;
-    // (uint8_t)((get_frame()->next_offset + 15) & ~15)
 
 
     // static const uint8_t param_store_rex[]   = { 0x48, 0x48, 0x48, 0x48, 0x4C, 0x4C };
@@ -1015,7 +974,6 @@ void get_function(StringViewListView* view, CompilerTarget target) {
         // printf("in function <%.*s>, param '%.*s'\n", (int)f_name.len, f_name.start, (int)f_args.array[i].len, f_args.array[i].start);
 
         // MOV [rbp - slot], rdi/rsi/...
-        // BS_write(code_output, param_store_rex[i]); // no rex.w, just 32-bit
         BS_write(code_output, 0x89);
         BS_write(code_output, param_store_modrm[i]);
         BS_write(code_output, (uint8_t) (-slot));
@@ -1028,9 +986,9 @@ void get_function(StringViewListView* view, CompilerTarget target) {
     get_stmt_block(view, returns_value, target);
 
 
-    StringView f_end = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&f_end, "end", 3)) {
-        fprintf(stderr, "[ERROR] expected 'end', got '%.*s'\n", (int) f_end.len, f_end.start);
+    const StringView f_end = SVLV_consume_one(view);
+    if (!SV_pv_cmp_eq(&f_end, "end", 3)) {
+        srcmap_error(&source_map, f_end.start, "expected 'end', got '%.*s'", (int)f_end.len, f_end.start);
         exit(1);
     }
 
@@ -1098,7 +1056,7 @@ bool is_include_next(StringViewListView* list) {
     if (SVLV_is_empty(list)) return false;
 
     StringView sv = SVLV_inspect_back(list);
-    if (SV__pv_cmp_eq(&sv, "include", 7)) return true;
+    if (SV_pv_cmp_eq(&sv, "include", 7)) return true;
     return false;
 }
 
@@ -1106,13 +1064,13 @@ bool is_quoted_string(StringView* sv) {
     return sv->len >= 2 && sv->start[0] == '"' && sv->start[sv->len - 1] == '"';
 }
 
-void compile(StringViewListView*, StringView* current_source_file, CompilerTarget);
+void compile(StringViewListView*, const StringView* current_source_file, CompilerTarget, StringView original_text); // , StringView filename
 
-void resolve_import(StringViewListView* list, const StringView* current_source_file, CompilerTarget target) {
+void resolve_import(StringViewListView* list, const StringView* current_source_file, const CompilerTarget target) {
     SVLV_consume_one(list); // include KW
     StringView path = SVLV_consume_one(list);
     if (!is_quoted_string(&path)) {
-        fprintf(stderr, "[ERROR] include excepted quoted string, but got '%.*s'\n", (int) path.len, path.start);
+        srcmap_error(&source_map, path.start, "include excepted quoted string");
         exit(1);
     }
 
@@ -1132,7 +1090,7 @@ void resolve_import(StringViewListView* list, const StringView* current_source_f
     StringView resolved_path = SV_from_string(resolved_path_raw);
 
     for (size_t n = 0; n < import_table.len; n++) {
-        if (SV__pp_cmp_eq(&import_table.array[n], &resolved_path)) {
+        if (SV_pp_cmp_eq(&import_table.array[n], &resolved_path)) {
             return;
         }
     }
@@ -1149,7 +1107,7 @@ void resolve_import(StringViewListView* list, const StringView* current_source_f
     free((void *) path_c);
     free((void *) source_path_c);
 
-    compile(&svlv, &resolved_path, target);
+    compile(&svlv, &resolved_path, target, content);
 
     SVL_p_free(&svl);
 
@@ -1166,7 +1124,7 @@ bool is_global_next(StringViewListView* list) {
     if (SVLV_is_empty(list)) return false;
 
     StringView sv = SVLV_inspect_back(list);
-    if (SV__pv_cmp_eq(&sv, "global", 6)) return true;
+    if (SV_pv_cmp_eq(&sv, "global", 6)) return true;
     return false;
 }
 
@@ -1179,26 +1137,25 @@ void set_code_target_buffer_funcs(void) {
 }
 
 
-void get_global_var(StringViewListView* view, CompilerTarget target) {
+void get_global_var(StringViewListView* view, const CompilerTarget target) {
     set_code_target_buffer_globals();
     SVLV_consume_one(view); // for `global`
-    StringView type = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&type, "int", 3)) {
-        fprintf(stderr, "[ERROR] globals can only be of type 'int', got '%.*s'\n", (int) type.len, type.start);
+    const StringView type = SVLV_consume_one(view);
+    if (!SV_pv_cmp_eq(&type, "int", 3)) {
+        srcmap_error(&source_map, type.start, "globals can only be of type 'int', got '%.*s'", (int) type.len, type.start);
         exit(1);
     }
     StringView name = SVLV_consume_one(view);
     StringView assign = SVLV_consume_one(view);
-    if (!SV__pv_cmp_eq(&assign, ":", 1)) {
-        fprintf(stderr, "[ERROR] expected ':' after name in global variable declaration, got '%.*s'\n", (int) type.len,
-                type.start);
+    if (!SV_pv_cmp_eq(&assign, ":", 1)) {
+        srcmap_error(&source_map, assign.start, "expected ':' after name in global variable declaration, got '%.*s'", (int) assign.len, assign.start);
         exit(1);
     }
     // printf("in GLOBAL: var_table_length = %lu\n", var_table_length);
     Loc last = get_int_expr(view, target, false); // this generates instructions
 
     // move last into eax
-    emit_mov_eax(code_output, last, &global_patch_list_inicializer, target);
+    emit_mov_eax(code_output, last, &global_patch_list_initializer, target);
 
     switch (target) {
         case F_Elf64: {
@@ -1210,7 +1167,7 @@ void get_global_var(StringViewListView* view, CompilerTarget target) {
 
 
             if (GR_has_global(&globals_registry, name)) {
-                fprintf(stderr, "[ERROR] redeclaration of global variable '%.*s'\n", (int) name.len, name.start);
+                srcmap_error(&source_map, name.start, "redeclaration of global variable '%.*s'", (int)name.len, name.start);
                 exit(1);
             }
 
@@ -1219,7 +1176,7 @@ void get_global_var(StringViewListView* view, CompilerTarget target) {
                                                           .bss_offset = (int)alloc_bss_space(4)
                                                       });
 
-            GPL_register_patch(&global_patch_list_inicializer, (GlobalPatch){
+            GPL_register_patch(&global_patch_list_initializer, (GlobalPatch){
                                    .index = globals_index,
                                    .offset = pos,
                                    .relative = false,
@@ -1236,7 +1193,7 @@ void get_global_var(StringViewListView* view, CompilerTarget target) {
             BS_write_array(code_output, sizeof(store), store);
 
             if (GR_has_global(&globals_registry, name)) {
-                fprintf(stderr, "[ERROR] redeclaration of global variable '%.*s'\n", (int) name.len, name.start);
+                srcmap_error(&source_map, name.start, "redeclaration of global variable '%.*s'", (int)name.len, name.start);
                 exit(1);
             }
 
@@ -1245,7 +1202,7 @@ void get_global_var(StringViewListView* view, CompilerTarget target) {
                                                           .bss_offset = (int)alloc_bss_space(4)
                                                       });
 
-            GPL_register_patch(&global_patch_list_inicializer, (GlobalPatch){
+            GPL_register_patch(&global_patch_list_initializer, (GlobalPatch){
                                    .index = globals_index,
                                    .offset = pos,
                                    .relative = false,
@@ -1261,11 +1218,24 @@ void get_global_var(StringViewListView* view, CompilerTarget target) {
     set_code_target_buffer_funcs();
 }
 
-void compile(StringViewListView* list, StringView* current_source_file, CompilerTarget target) {
+void compile(StringViewListView* list, const StringView* current_source_file, const CompilerTarget target, const StringView original_text) {
+
+    source_map = (SourceMap) {
+        .src_start = original_text.start,
+        .src_len = original_text.len,
+        .filename = *current_source_file,
+    };
+    const SourceMap scp = source_map;
     var_table_length = 0;
+
     while (is_include_next(list)) {
+        source_map = scp;
         resolve_import(list, current_source_file, target);
     }
+
+    source_map = scp;
+
+
     while (list->len > 0) {
         if (is_global_next(list)) {
             get_global_var(list, target);
@@ -1275,12 +1245,11 @@ void compile(StringViewListView* list, StringView* current_source_file, Compiler
     }
 }
 
-void process_elf64(const StringView* input, StringView* current_source_file, const char* output_filepath);
+void process_elf64(const StringView* input, const StringView* current_source_file, const char* output_filepath);
 
 void process_win64(const StringView* input, StringView* current_source_file, const char* output_filepath);
 
-void process(const StringView* input, StringView* current_source_file, const char* output_filepath,
-             CompilerTarget target) {
+void process(const StringView* restrict input, StringView* restrict current_source_file, const char* restrict output_filepath, const CompilerTarget target) {
     code_output_funcs = BS_new();
     code_output_globals = BS_new();
     code_output = &code_output_funcs;
@@ -1289,7 +1258,9 @@ void process(const StringView* input, StringView* current_source_file, const cha
 
     globals_registry = GR_new();
     global_patch_list = GPL_new();
-    global_patch_list_inicializer = GPL_new();
+    global_patch_list_initializer = GPL_new();
+
+    content_ptrs = malloc(sizeof(char *) * content_ptrs_cap);
 
     switch (target) {
         case F_Elf64:
@@ -1305,10 +1276,15 @@ void process(const StringView* input, StringView* current_source_file, const cha
 
     GR_free(&globals_registry);
     GPL_free(&global_patch_list);
-    GPL_free(&global_patch_list_inicializer);
+    GPL_free(&global_patch_list_initializer);
+
+    for (size_t n = 0; n < content_ptrs_len; n++) {
+        free(content_ptrs[n]);
+    }
+    free(content_ptrs);
 }
 
-void process_elf64(const StringView* input, StringView* current_source_file, const char* output_filepath) {
+void process_elf64(const StringView* restrict input, const StringView* restrict current_source_file, const char* restrict output_filepath) {
     const uint64_t code_load_addr = 0x400000;
     const uint64_t str_consts_load_addr = 0x800000;
     const uint64_t bss_load_addr = 0x600000;
@@ -1320,8 +1296,6 @@ void process_elf64(const StringView* input, StringView* current_source_file, con
     import_table = SVL_new();
 
     SVL_p_push(&import_table, *current_source_file);
-
-    content_ptrs = malloc(sizeof(char *) * content_ptrs_cap);
 
 
     string_consts = SVL_new();
@@ -1343,14 +1317,14 @@ void process_elf64(const StringView* input, StringView* current_source_file, con
         0x0f, 0x05, //                   syscall
     };
     BS_write_array(code_output, sizeof(entry_point), entry_point);
-    FCPL_register_pach(&function_patch_list, (FunctionCallPatch){
+    FCPL_register_patch(&function_patch_list, (FunctionCallPatch){
                            .name = SV_from_string_len("main", 4),
                            .offset = entry_point_patch_cursor,
                            .relative = true,
                            .bit_size = 4,
         .is_local = true,
                        });
-    FCPL_register_pach(&function_patch_list, (FunctionCallPatch){
+    FCPL_register_patch(&function_patch_list, (FunctionCallPatch){
                            .name = SV_from_string_len("__global", 8),
                            .offset = globals_patch_cursor,
                            .relative = true,
@@ -1403,7 +1377,7 @@ void process_elf64(const StringView* input, StringView* current_source_file, con
     size_t globals_frame_override_pos = BS_get_cursor(&code_output_globals) - 1;
 
 
-    compile(&svlv, current_source_file, F_Elf64);
+    compile(&svlv, current_source_file, F_Elf64, *input);
 
     size_t globals_init_cursor_snap = BS_get_cursor(&code_output_globals);
     BS_set_cursor(&code_output_globals, globals_frame_override_pos);
@@ -1422,7 +1396,7 @@ void process_elf64(const StringView* input, StringView* current_source_file, con
 
 
     resolve_globals(code_output_funcs.array, bss_load_addr, &globals_registry, &global_patch_list);
-    resolve_globals(code_output_globals.array, bss_load_addr, &globals_registry, &global_patch_list_inicializer);
+    resolve_globals(code_output_globals.array, bss_load_addr, &globals_registry, &global_patch_list_initializer);
 
     size_t global_inicializer_cursor = BS_get_cursor(code_output);
 
@@ -1440,7 +1414,7 @@ void process_elf64(const StringView* input, StringView* current_source_file, con
         exit(1);
     }
     if (main_fn.returns_value == false) {
-        fprintf(stderr, "[ERROR] main function should return int, but specified in the program as 'void'\n");
+        fprintf(stderr, "[ERROR] main function should return int, but declared in the program as 'void'\n");
         exit(1);
     }
 
@@ -1489,10 +1463,6 @@ void process_elf64(const StringView* input, StringView* current_source_file, con
     FR_free(&new_fr);
     FCPL_free(&function_patch_list);
     SVL_p_free(&import_table);
-    for (size_t n = 0; n < content_ptrs_len; n++) {
-        free(content_ptrs[n]);
-    }
-    free(content_ptrs);
     SVL_p_free(&string_consts);
     SCARL_free(&string_consts_relocations);
 }
@@ -1505,8 +1475,6 @@ void process_win64(const StringView* input, StringView* current_source_file, con
     import_table = SVL_new();
 
     SVL_p_push(&import_table, *current_source_file);
-
-    content_ptrs = malloc(sizeof(char *) * content_ptrs_cap);
 
 
     string_consts = SVL_new();
@@ -1539,14 +1507,14 @@ void process_win64(const StringView* input, StringView* current_source_file, con
         0xFF, 0x10, // call   QWORD PTR [rax]
     };
     BS_write_array(code_output, sizeof(entry_point), entry_point);
-    FCPL_register_pach(&function_patch_list, (FunctionCallPatch){
+    FCPL_register_patch(&function_patch_list, (FunctionCallPatch){
                            .name = SV_from_string_len("main", 4),
                            .offset = entry_point_patch_cursor,
                            .relative = true,
                            .bit_size = 4,
                             .is_local = true,
                        });
-    FCPL_register_pach(&function_patch_list, (FunctionCallPatch){
+    FCPL_register_patch(&function_patch_list, (FunctionCallPatch){
                            .name = SV_from_string_len("__global", 8),
                            .offset = globals_patch_cursor,
                            .relative = true,
@@ -1644,7 +1612,7 @@ void process_win64(const StringView* input, StringView* current_source_file, con
     size_t globals_frame_override_pos = BS_get_cursor(&code_output_globals) - 1;
 
 
-    compile(&svlv, current_source_file, F_Win64);
+    compile(&svlv, current_source_file, F_Win64, *input);
 
 
     size_t globals_init_cursor_snap = BS_get_cursor(&code_output_globals);
@@ -1727,10 +1695,6 @@ void process_win64(const StringView* input, StringView* current_source_file, con
     FR_free(&new_fr);
     FCPL_free(&function_patch_list);
     SVL_p_free(&import_table);
-    for (size_t n = 0; n < content_ptrs_len; n++) {
-        free(content_ptrs[n]);
-    }
-    free(content_ptrs);
     SVL_p_free(&string_consts);
     SCARL_free(&string_consts_relocations);
 }

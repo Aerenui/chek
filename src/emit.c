@@ -134,10 +134,10 @@ void LL_push(LabelList* ll, Label l) {
 //             });
 // }
 
-void resolve_relocations(ByteSeg *buf, RelocationList *rels, LabelList *labels) {
+void resolve_relocations(const ByteSeg* restrict buf, const RelocationList* restrict rels, const LabelList* restrict labels) {
     for (size_t i = 0; i < rels->len; i++) {
-        Relocation *r = &rels->array[i];
-        Label *target = NULL;
+        const Relocation *r = &rels->array[i];
+        Label* target = NULL;
         for (size_t j = 0; j < labels->len; j++) {
             if (labels->array[j].id == r->id && labels->array[j].kind == r->kind) {
                 target = &labels->array[j];
@@ -155,7 +155,7 @@ void resolve_relocations(ByteSeg *buf, RelocationList *rels, LabelList *labels) 
 
 // -----------------------------------------------------------------------------------------
 
-void emit_mov_eax(ByteSeg* out, Loc loc, GlobalPatchList* gpl, CompilerTarget target) {
+void emit_mov_eax(ByteSeg* out, const Loc loc, GlobalPatchList* gpl, const CompilerTarget target) {
     switch (loc.kind) {
         case LOC_IMMEDIATE:
             BS_write(out, 0xB8);
@@ -166,7 +166,7 @@ void emit_mov_eax(ByteSeg* out, Loc loc, GlobalPatchList* gpl, CompilerTarget ta
             break;
         case LOC_VAR:
         case LOC_STACK_SLOT: {
-            int slot = (loc.kind == LOC_VAR) ? lookup_var(loc.var) : loc.offset;
+            const int slot = (loc.kind == LOC_VAR) ? lookup_var(loc.var) : loc.offset;
             BS_write(out, 0x8B);
             BS_write(out, 0x45);
             BS_write(out, (uint8_t)(-slot));
@@ -175,7 +175,7 @@ void emit_mov_eax(ByteSeg* out, Loc loc, GlobalPatchList* gpl, CompilerTarget ta
         case LOC_GLOBAL: {
             switch (target) {
                 case F_Elf64: {
-                    size_t pos = BS_get_cursor(out) + 3;
+                    const size_t pos = BS_get_cursor(out) + 3;
                     BS_write(out, 0x8B);        // MOV eax, [addr32]
                     BS_write(out, 0x04);
                     BS_write(out, 0x25);
@@ -189,7 +189,7 @@ void emit_mov_eax(ByteSeg* out, Loc loc, GlobalPatchList* gpl, CompilerTarget ta
                     break;
                 }
                 case F_Win64: {
-                    size_t pos = BS_get_cursor(out) + 2;
+                    const size_t pos = BS_get_cursor(out) + 2;
                     BS_write(out, 0x48); BS_write(out, 0xB9);   // MOV rcx, imm64
                     BS_write(out, 0x00); BS_write(out, 0x00);
                     BS_write(out, 0x00); BS_write(out, 0x00);
@@ -209,7 +209,7 @@ void emit_mov_eax(ByteSeg* out, Loc loc, GlobalPatchList* gpl, CompilerTarget ta
     }
 }
 
-void emit_op_eax(ByteSeg* out, uint8_t opcode, Loc src, GlobalPatchList* gpl, CompilerTarget target) {
+void emit_op_eax(ByteSeg* restrict out, const uint8_t opcode, const Loc src, GlobalPatchList* restrict gpl, const CompilerTarget target) {
     switch (src.kind) {
         case LOC_IMMEDIATE:
             BS_write(out, 0xB9);
@@ -222,7 +222,7 @@ void emit_op_eax(ByteSeg* out, uint8_t opcode, Loc src, GlobalPatchList* gpl, Co
             break;
         case LOC_VAR:
         case LOC_STACK_SLOT: {
-            int slot = (src.kind == LOC_VAR) ? lookup_var(src.var) : src.offset;
+            const int slot = (src.kind == LOC_VAR) ? lookup_var(src.var) : src.offset;
             BS_write(out, opcode);
             BS_write(out, 0x45);
             BS_write(out, (uint8_t)(-slot));
@@ -231,7 +231,7 @@ void emit_op_eax(ByteSeg* out, uint8_t opcode, Loc src, GlobalPatchList* gpl, Co
         case LOC_GLOBAL: {
             switch (target) {
                 case F_Elf64: {
-                    size_t pos = BS_get_cursor(out) + 3;
+                    const size_t pos = BS_get_cursor(out) + 3;
                     BS_write(out, 0x8B);        // MOV ecx, [addr32]
                     BS_write(out, 0x0C);
                     BS_write(out, 0x25);
@@ -247,7 +247,7 @@ void emit_op_eax(ByteSeg* out, uint8_t opcode, Loc src, GlobalPatchList* gpl, Co
                     break;
                 }
                 case F_Win64: {
-                    size_t pos = BS_get_cursor(out) + 2;
+                    const size_t pos = BS_get_cursor(out) + 2;
                     BS_write(out, 0x48); BS_write(out, 0xB9);   // MOV rcx, imm64
                     BS_write(out, 0x00); BS_write(out, 0x00);
                     BS_write(out, 0x00); BS_write(out, 0x00);
@@ -269,7 +269,7 @@ void emit_op_eax(ByteSeg* out, uint8_t opcode, Loc src, GlobalPatchList* gpl, Co
     }
 }
 
-void emit_imul_eax(ByteSeg* out, Loc src, GlobalPatchList* gpl, CompilerTarget target) {
+void emit_imul_eax(ByteSeg* restrict out, const Loc src, GlobalPatchList* restrict gpl, const CompilerTarget target) {
     switch (src.kind) {
         case LOC_IMMEDIATE:
             BS_write(out, 0x69);
@@ -281,7 +281,7 @@ void emit_imul_eax(ByteSeg* out, Loc src, GlobalPatchList* gpl, CompilerTarget t
             break;
         case LOC_VAR:
         case LOC_STACK_SLOT: {
-            int slot = (src.kind == LOC_VAR) ? lookup_var(src.var) : src.offset;
+            const int slot = (src.kind == LOC_VAR) ? lookup_var(src.var) : src.offset;
             BS_write(out, 0x0F);
             BS_write(out, 0xAF);
             BS_write(out, 0x45);
@@ -291,7 +291,7 @@ void emit_imul_eax(ByteSeg* out, Loc src, GlobalPatchList* gpl, CompilerTarget t
         case LOC_GLOBAL: {
             switch (target) {
                 case F_Elf64: {
-                    size_t pos = BS_get_cursor(out) + 3;
+                    const size_t pos = BS_get_cursor(out) + 3;
                     BS_write(out, 0x8B);        // MOV ecx, [addr32]
                     BS_write(out, 0x0C);
                     BS_write(out, 0x25);
@@ -308,7 +308,7 @@ void emit_imul_eax(ByteSeg* out, Loc src, GlobalPatchList* gpl, CompilerTarget t
                     break;
                 }
                 case F_Win64: {
-                    size_t pos = BS_get_cursor(out) + 2;
+                    const size_t pos = BS_get_cursor(out) + 2;
                     BS_write(out, 0x48); BS_write(out, 0xB9);   // MOV rcx, imm64
                     BS_write(out, 0x00); BS_write(out, 0x00);
                     BS_write(out, 0x00); BS_write(out, 0x00);
@@ -331,91 +331,10 @@ void emit_imul_eax(ByteSeg* out, Loc src, GlobalPatchList* gpl, CompilerTarget t
     }
 }
 
-// void emit_mov_eax(ByteSeg* out, Loc loc) {
-//     if (loc.kind == LOC_IMMEDIATE) {
-//         // MOV eax, imm32  (B8 id)
-//         BS_write(out, 0xB8);
-//         BS_write(out, (loc.value >> 0) & 0xFF);
-//         BS_write(out, (loc.value >> 8) & 0xFF);
-//         BS_write(out, (loc.value >> 16) & 0xFF);
-//         BS_write(out, (loc.value >> 24) & 0xFF);
-//     } else {
-//         // LOC_VAR + LOC_STACK_SLOT
-//         // MOV eax, [rbp - offset]
-//         int slot = (loc.kind == LOC_VAR) ? lookup_var(loc.var) : loc.offset;
-//         BS_write(out, 0x8B);
-//         BS_write(out, 0x45);
-//         BS_write(out, (uint8_t) (-slot));
-//     }
-// }
-//
-// void emit_op_eax(ByteSeg* out, uint8_t opcode, Loc src) {
-//     if (src.kind == LOC_IMMEDIATE) {
-//         // 81 /0 id  (ADD eax, imm32)  — /0 for ADD, /5 for SUB
-//         // but simpler: MOV ecx, imm32 then OP eax, ecx
-//         BS_write(out, 0xB9); // MOV ecx, imm32
-//         BS_write(out, (src.value >> 0) & 0xFF);
-//         BS_write(out, (src.value >> 8) & 0xFF);
-//         BS_write(out, (src.value >> 16) & 0xFF);
-//         BS_write(out, (src.value >> 24) & 0xFF);
-//         BS_write(out, opcode); // ADD/SUB eax, ecx
-//         BS_write(out, 0xC1); // ModRM: mod=11, reg=eax(0), rm=ecx(1)
-//     } else {
-//         // src is in memory [rbp - offset]
-//         int slot = (src.kind == LOC_VAR) ? lookup_var(src.var) : src.offset;
-//         BS_write(out, opcode); // ADD/SUB eax, [rbp - slot]
-//         BS_write(out, 0x45); // ModRM: mod=01, reg=eax(0), rm=rbp(5)
-//         BS_write(out, (uint8_t) (-slot));
-//     }
-// }
-//
-// void emit_imul_eax(ByteSeg* out, Loc src) {
-//     if (src.kind == LOC_IMMEDIATE) {
-//         // IMUL eax, eax, imm32  (6B /r ib for imm8, 69 /r id for imm32)
-//         BS_write(out, 0x69); // IMUL r32, r/m32, imm32
-//         BS_write(out, 0xC0); // ModRM: mod=11, reg=eax(0), rm=eax(0)
-//         BS_write(out, (src.value >> 0) & 0xFF);
-//         BS_write(out, (src.value >> 8) & 0xFF);
-//         BS_write(out, (src.value >> 16) & 0xFF);
-//         BS_write(out, (src.value >> 24) & 0xFF);
-//     } else {
-//         // IMUL eax, [rbp - slot]  (0F AF /r)
-//         int slot = (src.kind == LOC_VAR) ? lookup_var(src.var) : src.offset;
-//         BS_write(out, 0x0F);
-//         BS_write(out, 0xAF); // IMUL r32, r/m32
-//         BS_write(out, 0x45); // ModRM: mod=01, reg=eax(0), rm=rbp(5)
-//         BS_write(out, (uint8_t) (-slot));
-//     }
-// }
 
-// void emit_jmp_label(ByteSeg* buf, RelocationList* rels, StringView label) {
-//     BS_write(buf, 0xE9); // JMP rel32
-//     size_t patch_pos = BS_get_cursor(buf);
-//     BS_write_array(buf, 4, (uint8_t[]){0, 0, 0, 0});
-//     RL_push(rels, (Relocation){
-//                 .patch_pos = patch_pos,
-//                 .patch_size = 4,
-//                 .label = label,
-//                 .inst_end = BS_get_cursor(buf),
-//             });
-// }
-//
-// void emit_je_label(ByteSeg* buf, RelocationList* rels, StringView label) {
-//     BS_write_array(buf, 2, (uint8_t[]){0x0F, 0x84}); // JE rel32
-//     size_t patch_pos = BS_get_cursor(buf);
-//     BS_write_array(buf, 4, (uint8_t[]){0, 0, 0, 0});
-//     RL_push(rels, (Relocation){
-//                 .patch_pos = patch_pos,
-//                 .patch_size = 4,
-//                 .label = label,
-//                 .inst_end = BS_get_cursor(buf),
-//             });
-// }
-
-
-void emit_jmp(ByteSeg *buf, RelocationList *rels, size_t id, RelKind kind) {
+void emit_jmp(ByteSeg* restrict buf, RelocationList* restrict rels, const size_t id, const RelKind kind) {
     BS_write(buf, 0xE9);
-    size_t patch_pos = BS_get_cursor(buf);
+    const size_t patch_pos = BS_get_cursor(buf);
     BS_write_array(buf, 4, (uint8_t[]){0, 0, 0, 0});
     RL_push(rels, (Relocation){
         .patch_pos  = patch_pos,
@@ -426,7 +345,7 @@ void emit_jmp(ByteSeg *buf, RelocationList *rels, size_t id, RelKind kind) {
     });
 }
 
-void emit_je(ByteSeg *buf, RelocationList *rels, size_t id, RelKind kind) {
+void emit_je(ByteSeg* restrict buf, RelocationList* restrict rels, const size_t id, const RelKind kind) {
     BS_write_array(buf, 2, (uint8_t[]){0x0F, 0x84});
     size_t patch_pos = BS_get_cursor(buf);
     BS_write_array(buf, 4, (uint8_t[]){0, 0, 0, 0});
@@ -452,11 +371,11 @@ FunctionsRegistry FR_new(void) {
     };
 }
 
-inline void FR_free(FunctionsRegistry* fr) {
+inline void FR_free(const FunctionsRegistry* fr) {
     free(fr->array);
 }
 
-void FR_register_function(FunctionsRegistry* fr, Function f) {
+void FR_register_function(FunctionsRegistry* fr, const Function f) {
     if (FR_has_function(fr, f.name)) {
         fprintf(stderr, "[ERROR] inserting function when function with that name already exists, '%.*s'\n", (int)f.name.len, f.name.start);
         exit(1);
@@ -470,9 +389,9 @@ void FR_register_function(FunctionsRegistry* fr, Function f) {
     fr->array[fr->len++] = f;
 }
 
-void FR_overwrite_function(FunctionsRegistry* fr, Function f) {
+void FR_overwrite_function(const FunctionsRegistry* fr, const Function f) {
     for (size_t n = 0; n < fr->len; n++) {
-        if (SV__pp_cmp_eq(&fr->array[n].name, &f.name)) {
+        if (SV_pp_cmp_eq(&fr->array[n].name, &f.name)) {
             fr->array[n] = f;
             return;
         }
@@ -481,18 +400,18 @@ void FR_overwrite_function(FunctionsRegistry* fr, Function f) {
     exit(1);
 }
 
-bool FR_has_function(FunctionsRegistry* fr, StringView name) {
+bool FR_has_function(const FunctionsRegistry* fr, const StringView name) {
     for (size_t n = 0; n < fr->len; n++) {
-        if (SV__pp_cmp_eq(&fr->array[n].name, &name)) {
+        if (SV_pp_cmp_eq(&fr->array[n].name, &name)) {
             return true;
         }
     }
     return false;
 }
 
-Function FR_lookup_function(FunctionsRegistry* fr, StringView name) {
+Function FR_lookup_function(const FunctionsRegistry* fr, const StringView name) {
     for (size_t n = 0; n < fr->len; n++) {
-        if (SV__pp_cmp_eq(&fr->array[n].name, &name)) {
+        if (SV_pp_cmp_eq(&fr->array[n].name, &name)) {
             return fr->array[n];
         }
     }
@@ -513,11 +432,11 @@ FunctionCallPatchList FCPL_new(void) {
     };
 }
 
-inline void FCPL_free(FunctionCallPatchList* fclp) {
+inline void FCPL_free(const FunctionCallPatchList* fclp) {
     free(fclp->array);
 }
 
-void FCPL_register_pach(FunctionCallPatchList* fl, FunctionCallPatch fp) {
+void FCPL_register_patch(FunctionCallPatchList* fl, const FunctionCallPatch fp) {
     if (fl->len + 1 > fl->cap) {
         fl->cap *= 2;
         FunctionCallPatch* new_array = realloc(fl->array, sizeof(FunctionCallPatch) * fl->cap);
@@ -542,11 +461,11 @@ GlobalsRegistry GR_new(void) {
     };
 }
 
-inline void GR_free(GlobalsRegistry* gr) {
+inline void GR_free(const GlobalsRegistry* gr) {
     free(gr->array);
 }
 
-size_t GR_register_global(GlobalsRegistry* gr, Global g) {
+size_t GR_register_global(GlobalsRegistry* gr, const Global g) {
     if (gr->len + 1 > gr->cap) {
         gr->cap *= 2;
         Global* new_array = realloc(gr->array, sizeof(Global)*gr->cap);
@@ -556,18 +475,18 @@ size_t GR_register_global(GlobalsRegistry* gr, Global g) {
     gr->array[gr->len++] = g;
     return gr->len - 1;
 }
-bool GR_has_global(GlobalsRegistry* gr, StringView g) {
+bool GR_has_global(const GlobalsRegistry* gr, const StringView g) {
     for (size_t n=0; n< gr->len; n++) {
-        if (SV__pp_cmp_eq(&gr->array[n].name, &g)) {
+        if (SV_pp_cmp_eq(&gr->array[n].name, &g)) {
             return true;
         }
     }
     return false;
 }
 
-Global GR_lookup_global(GlobalsRegistry* gr, StringView g) {
+Global GR_lookup_global(const GlobalsRegistry* gr, const StringView g) {
     for (size_t n=0; n< gr->len; n++) {
-        if (SV__pp_cmp_eq(&gr->array[n].name, &g)) {
+        if (SV_pp_cmp_eq(&gr->array[n].name, &g)) {
             return gr->array[n];
         }
     }
@@ -575,9 +494,9 @@ Global GR_lookup_global(GlobalsRegistry* gr, StringView g) {
     exit(1);
 }
 
-size_t GR_lookup_global_index(GlobalsRegistry* gr, StringView g) {
+size_t GR_lookup_global_index(const GlobalsRegistry* gr, const StringView g) {
     for (size_t n=0; n< gr->len; n++) {
-        if (SV__pp_cmp_eq(&gr->array[n].name, &g)) {
+        if (SV_pp_cmp_eq(&gr->array[n].name, &g)) {
             return n;
         }
     }
@@ -595,11 +514,10 @@ GlobalPatchList GPL_new(void) {
         .len = 0,
     };
 }
-inline void GPL_free(GlobalPatchList* gpl) {
+inline void GPL_free(const GlobalPatchList* gpl) {
     free(gpl->array);
 }
-void GPL_register_patch(GlobalPatchList* gpl, GlobalPatch gp) {
-    // printf("[DEBUG] patch index = %lu\n", gp.index);
+void GPL_register_patch(GlobalPatchList* gpl, const GlobalPatch gp) {
     if (gpl->len + 1 > gpl->cap) {
         gpl->cap *= 2;
         GlobalPatch* new_array = realloc(gpl->array,sizeof(GlobalPatch)*gpl->cap);
@@ -624,7 +542,7 @@ StringConstAddrRelocationList SCARL_new(void) {
     };
 }
 
-void SCARL_push(StringConstAddrRelocationList* scl, StringConstAddrRelocation scr) {
+void SCARL_push(StringConstAddrRelocationList* scl, const StringConstAddrRelocation scr) {
     if (scl->len + 1 > scl->cap) {
         scl->cap *= 2;
         StringConstAddrRelocation* new_array = realloc(scl->array, sizeof(StringConstAddrRelocation) * scl->cap);
@@ -634,14 +552,14 @@ void SCARL_push(StringConstAddrRelocationList* scl, StringConstAddrRelocation sc
     scl->array[scl->len++] = scr;
 }
 
-inline void SCARL_free(StringConstAddrRelocationList* scl) {
+inline void SCARL_free(const StringConstAddrRelocationList* scl) {
     free(scl->array);
 }
 
 
-void SCARL_resolve(StringConstAddrRelocationList* scarl, uint8_t* array, uint64_t const_section_load_addr, StringViewList* string_consts) {
+void SCARL_resolve(const StringConstAddrRelocationList* scarl, uint8_t* restrict array, const uint64_t const_section_load_addr, const StringViewList* restrict string_consts) {
     for (size_t n=0; n < scarl->len; n++) {
-        StringConstAddrRelocation rel = scarl->array[n];
+        const StringConstAddrRelocation rel = scarl->array[n];
         size_t const_offset = 1; // first byte is NULL
         for (size_t i=0; i < rel.const_index;  i++) {
             const_offset += string_consts->array[i].len + 1; // for NULL
@@ -664,17 +582,17 @@ void SCARL_resolve(StringConstAddrRelocationList* scarl, uint8_t* array, uint64_
 
 // -----------------------------------------------------------------------------------------
 
-void resolve_function_calls(uint8_t* array, size_t local_code_size, FunctionsRegistry* fr, FunctionCallPatchList* patches) {
+void resolve_function_calls(uint8_t* restrict array, const size_t local_code_size, const FunctionsRegistry* restrict fr, const FunctionCallPatchList* restrict patches) {
     for (size_t i = 0; i < patches->len; i++) {
-        FunctionCallPatch* patch = &patches->array[i];
+        const FunctionCallPatch* patch = &patches->array[i];
 
         if (!FR_has_function(fr, patch->name)) {
             fprintf(stderr, "[ERROR] unknown function '%.*s'\n", (int)patch->name.len, patch->name.start);
             exit(1);
         }
 
-        Function f = FR_lookup_function(fr, patch->name);
-        size_t target = f.offset;
+        const Function f = FR_lookup_function(fr, patch->name);
+        const size_t target = f.offset;
 
         // size_t target = f.offset;
         // size_t* target = FR_lookup(fr, patch->name);
@@ -720,11 +638,11 @@ void resolve_function_calls(uint8_t* array, size_t local_code_size, FunctionsReg
 }
 
 
-void resolve_globals(uint8_t* array, size_t bss_base_addr, GlobalsRegistry* gr, GlobalPatchList* gpl) {
+void resolve_globals(uint8_t* restrict array, const size_t bss_base_addr, const GlobalsRegistry* restrict gr, const GlobalPatchList* restrict gpl) {
     for (size_t i = 0; i < gpl->len; i++) {
-        GlobalPatch* patch = &gpl->array[i];
-        Global* global = &gr->array[patch->index];
-        size_t addr = bss_base_addr + global->bss_offset;
+        const GlobalPatch* patch = &gpl->array[i];
+        const Global* global = &gr->array[patch->index];
+        const size_t addr = bss_base_addr + global->bss_offset;
         uint8_t* target = array + patch->offset;
         for (uint8_t b = 0; b < patch->bit_size; b++) {
             target[b] = (addr >> (b * 8)) & 0xFF;

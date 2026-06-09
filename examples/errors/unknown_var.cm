@@ -1,0 +1,6 @@
+include "../libs/print_int.cm";
+
+int main()
+    int a: b + 5;
+    return 0;
+end.

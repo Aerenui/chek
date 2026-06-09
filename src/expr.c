@@ -4,10 +4,12 @@
 
 #include "expr.h"
 
-#include <assert.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 
 #include "compiler.h"
+#include "error.h"
 #include "utils.h"
 
 
@@ -37,84 +39,19 @@ bool is_operator(char c) {
            c == '&' || c == '|' || c == '!';
 }
 
-/*char* format_operator(char c) {
-    if (c == '+') return "add";
-    if (c == '-') return "sub";
-    if (c == '*') return "mul";
-    if (c == '/') return "div";
-    fprintf(stderr, "[ERROR] unknown operator '%c'\n", c);
-    exit(1);
-}*/
 
 
-Loc/*StringView*/ get_int_expr(StringViewListView* view, CompilerTarget target, bool is_local) {
+Loc get_int_expr(StringViewListView* view, const CompilerTarget target, const bool is_local) {
     StringViewList ot = SVL_new();
     StringViewList operator_stack = SVL_new();
     bool expect_operator = false;
 
-    /*while (!SVLV_is_empty(view)) {
-        StringView nw = SVLV_inspect_back(view);
-        {
-            // StringView inspect = SVLV_inspect_back(view);
-            char fc = nw.start[0];
-            if (is_digit(fc) || is_operator(fc) || is_alpha(fc) || fc == '(' || fc == ')'); else {
-                break;
-            }
-            if (fc == ';') break;
-        }
-
-        // StringView nw = SVLV_consume_one(view);
-
-        // --- GRAMMAR VALIDATION CHECK ---
-        if (expect_operator) {
-            // We are expecting an operator or a closing parenthesis.
-            // If we get a variable, int, or opening parenthesis, the expression has broken/ended.
-            if (is_digit(nw.start[0]) || is_alpha(nw.start[0]) || (nw.start[0] == '(' && nw.len == 1)) {
-                break; // Early exit! Stop processing further tokens.
-            }
-        } else {
-            // We are expecting a value or an opening parenthesis.
-            // If we get an operator or a closing parenthesis, it's malformed or stopped.
-            if ((is_operator(nw.start[0]) || nw.start[0] == ')') && nw.len == 1) {
-                break; // Early exit!
-            }
-        }
-
-        nw = SVLV_consume_one(view);
-
-        // --- SHUNTING-YARD PROCESSING ---
-        if (is_digit(nw.start[0]) || is_alpha(nw.start[0])) {
-            SVL_p_push(&ot, nw);
-            expect_operator = true; // Next, we look for an operator (e.g., '+')
-        } else if (nw.start[0] == '(' && nw.len == 1) {
-            SVL_p_push(&operator_stack, nw);
-            expect_operator = false; // Inside '(', we look for a new value
-        } else if (nw.start[0] == ')' && nw.len == 1) {
-            while (operator_stack.len > 0 && SVL_p_inspect_back(&operator_stack)->start[0] != '(') {
-                StringView val = SVL_p_pop(&operator_stack);
-                SVL_p_push(&ot, val);
-            }
-            if (operator_stack.len > 0) {
-                SVL_p_pop(&operator_stack); // Remove '('
-            }
-            expect_operator = true; // After ')', we expect an operator
-        } else if (is_operator(nw.start[0]) && nw.len == 1) {
-            char current_op = nw.start[0];
-            while (operator_stack.len > 0 && is_operator(SVL_p_inspect_back(&operator_stack)->start[0]) && precedence(
-                       SVL_p_inspect_back(&operator_stack)->start[0]) >= precedence(current_op)) {
-                StringView val = SVL_p_pop(&operator_stack);
-                SVL_p_push(&ot, val);
-            }
-            SVL_p_push(&operator_stack, nw);
-            expect_operator = false; // After an operator, we expect a value
-        }
-    }*/
     int paren_depth = 0;
 
     while (!SVLV_is_empty(view)) {
         StringView nw = SVLV_inspect_back(view);
         {
-            char fc = nw.start[0];
+            const char fc = nw.start[0];
             if (is_digit(fc) || is_operator(fc) || is_alpha(fc) || fc == '(' || fc == ')');
             else {
                 break;
@@ -178,7 +115,7 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view, CompilerTarget target, 
     for (size_t i = 0; i < ot.len; i++) {
         StringView sv = ot.array[i];
         // printf("  i=%zu sv='%.*s' stack_size=%zu\n", i, (int)sv.len, sv.start, stack2.len);
-        GlobalPatchList* globals_patch_ptr = is_local ? &global_patch_list : &global_patch_list_inicializer;
+        GlobalPatchList* globals_patch_ptr = is_local ? &global_patch_list : &global_patch_list_initializer;
 
         if (is_operator(sv.start[0])) {
             Loc s2 = LS_pop(&stack2);
@@ -213,7 +150,7 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view, CompilerTarget target, 
                     case LOC_GLOBAL: {
                         switch (target) {
                             case F_Elf64: {
-                                size_t pos = BS_get_cursor(code_output) + 3;
+                                const size_t pos = BS_get_cursor(code_output) + 3;
                                 BS_write(code_output, 0x8B); // MOV ecx, [addr32]
                                 BS_write(code_output, 0x0C);
                                 BS_write(code_output, 0x25);
@@ -229,7 +166,7 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view, CompilerTarget target, 
                                 break;
                             }
                             case F_Win64: {
-                                size_t pos = BS_get_cursor(code_output) + 2;
+                                const size_t pos = BS_get_cursor(code_output) + 2;
                                 BS_write(code_output, 0x48);
                                 BS_write(code_output, 0xB9); // MOV rcx, imm64
                                 BS_write(code_output, 0x00);
@@ -272,22 +209,7 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view, CompilerTarget target, 
                 BS_write(code_output, 0x00);
 
                 // 3. Conditionally move 0 into eax if the condition is false.
-                // The flags from the CMP we ran up top are still valid!
                 BS_write(code_output, 0x0F);
-                // switch (sv.start[0]) {
-                //     case '<': BS_write(code_output, 0x43);
-                //         break; // CMOVAE (not less)
-                //     case '>': BS_write(code_output, 0x46);
-                //         break; // CMOVBE (not greater)
-                //     case '=': BS_write(code_output, 0x45);
-                //         break; // CMOVNE (not equal)
-                //     case '!': BS_write(code_output, 0x44);
-                //         break; // CMOVE (not-not-equal, i.e. equal → false)
-                //     default: {
-                //         fprintf(stderr, "[ERROR] <internal> invalid switch path\n");
-                //         exit(1);
-                //     }
-                // }
                 switch (sv.start[0]) {
                     case '<': BS_write(code_output, 0x4D); break; // CMOVGE (not signed-less)
                     case '>': BS_write(code_output, 0x4E); break; // CMOVLE (not signed-greater)
@@ -333,7 +255,7 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view, CompilerTarget target, 
                         }
                         switch (target) {
                             case F_Elf64: {
-                                size_t pos = BS_get_cursor(code_output) + 3;
+                                const size_t pos = BS_get_cursor(code_output) + 3;
                                 BS_write(code_output, 0x8B); // MOV ecx, [addr32]
                                 BS_write(code_output, 0x0C);
                                 BS_write(code_output, 0x25);
@@ -349,7 +271,7 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view, CompilerTarget target, 
                                 break;
                             }
                             case F_Win64: {
-                                size_t pos = BS_get_cursor(code_output) + 2;
+                                const size_t pos = BS_get_cursor(code_output) + 2;
                                 BS_write(code_output, 0x48);
                                 BS_write(code_output, 0xB9); // MOV rcx, imm64
                                 BS_write(code_output, 0x00);
@@ -390,11 +312,11 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view, CompilerTarget target, 
                 BS_write(code_output, 0x05);
 
                 // call <__rt_exception__zero_div>  (5 bytes, needs patching like your entry_point)
-                size_t divz_patch_cursor = BS_get_cursor(code_output) + 1;
+                const size_t divz_patch_cursor = BS_get_cursor(code_output) + 1;
                 uint8_t call_divz[] = {0xe8, 0x00, 0x00, 0x00, 0x00};
                 BS_write_array(code_output, sizeof(call_divz), call_divz);
 
-                FCPL_register_pach(&function_patch_list, (FunctionCallPatch){
+                FCPL_register_patch(&function_patch_list, (FunctionCallPatch){
                                        .name = SV_from_string_len("__rt_exception__zero_div", 24),
                                        .offset = divz_patch_cursor,
                                        .relative = true,
@@ -421,7 +343,7 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view, CompilerTarget target, 
             }
 
 
-            int slot; // = alloc_stack_slot(get_frame());
+            int slot;
             if (is_local)
                 slot = alloc_stack_slot(get_frame());
             else {
@@ -440,14 +362,47 @@ Loc/*StringView*/ get_int_expr(StringViewListView* view, CompilerTarget target, 
                 LS_push(&stack2, (Loc){.kind = LOC_VAR, .var = sv});
             } else if (GR_has_global(&globals_registry, sv)) {
                 size_t global_index = GR_lookup_global_index(&globals_registry, sv);
-                LS_push(&stack2, (Loc){.kind = LOC_GLOBAL, .offset = global_index});
+                LS_push(&stack2, (Loc){.kind = LOC_GLOBAL, .offset = (int)global_index});
             } else {
-                fprintf(stderr, "[ERROR] unknown variable '%.*s'\n", (int) sv.len, sv.start);
+                srcmap_error(&source_map, sv.start, "undefined variable '%.*s'", (int)sv.len, sv.start);
                 exit(1);
             }
         } else {
             // numeric literal
-            LS_push(&stack2, (Loc){.kind = LOC_IMMEDIATE, .value = atoi(sv.start)});
+            if (sv.len > 60) {
+                srcmap_error(&source_map, sv.start, "malformed integer '%.*s'", (int)sv.len, sv.start);
+                exit(1);
+            }
+            char buf[64]; // or malloc if dynamic
+            snprintf(buf, sizeof(buf), "%.*s", (int)sv.len, sv.start);
+            char *end;
+            errno = 0;
+            const long val = strtol(buf, &end, 10);
+
+            // overflow/underflow
+            if (errno != 0) {
+                srcmap_error(&source_map, sv.start, "value does not fit into integer '%.*s'", (int)sv.len, sv.start);
+                exit(1);
+            }
+
+            // no digits consumed
+            if (end == sv.start) {
+                srcmap_error(&source_map, sv.start, "malformed integer '%.*s'", (int)sv.len, sv.start);
+                exit(1);
+            }
+
+            // trailing garbage
+            if (*end != '\0') {
+                srcmap_error(&source_map, sv.start, "malformed integer '%.*s'", (int)sv.len, sv.start);
+                exit(1);
+            }
+
+            if (val < INT_MIN || val > INT_MAX) {
+                srcmap_error(&source_map, sv.start, "value does not fit into integer '%.*s'", (int)sv.len, sv.start);
+                exit(1);
+            }
+            LS_push(&stack2, (Loc){.kind = LOC_IMMEDIATE, .value = (int)val});
+            // LS_push(&stack2, (Loc){.kind = LOC_IMMEDIATE, .value = atoi(sv.start)});
         }
     }
 

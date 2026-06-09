@@ -31,7 +31,7 @@ int main(int argc, char* argv[]) {
     bool has_target_default = true;
 #else
     CompilerTarget target = F_Elf64;
-    bool has_target_default = true;
+    bool has_target_default = false;
 #endif
     bool target_set = false;
 
@@ -40,7 +40,7 @@ int main(int argc, char* argv[]) {
     size_t i = 1;
     while (i < args.len) {
         StringView arg = args.array[i];
-        if (SV__pv_cmp_eq(&arg, "-o", 2)) {
+        if (SV_pv_cmp_eq(&arg, "-o", 2)) {
             if (i + 1 >= args.len) {
                 fprintf(stderr, "[ERROR] -o requires an argument\n");
                 SVL_p_free(&args);
@@ -48,16 +48,16 @@ int main(int argc, char* argv[]) {
             }
             output_name = args.array[i + 1].start;
             i += 2;
-        } else if (SV__pv_cmp_eq(&arg, "-t", 2)) {
+        } else if (SV_pv_cmp_eq(&arg, "-t", 2)) {
             if (i + 1 >= args.len) {
                 fprintf(stderr, "[ERROR] -f requires an argument\n");
                 SVL_p_free(&args);
                 return 1;
             }
             StringView fmt = args.array[i + 1];
-            if (SV__pv_cmp_eq(&fmt, "win64", 5)) {
+            if (SV_pv_cmp_eq(&fmt, "win64", 5)) {
                 target = F_Win64;
-            } else if (SV__pv_cmp_eq(&fmt, "elf64", 5)) {
+            } else if (SV_pv_cmp_eq(&fmt, "elf64", 5)) {
                 target = F_Elf64;
             } else {
                 fprintf(stderr, "[ERROR] -f: unknown target '%.*s' (expected win64 or elf64)\n",

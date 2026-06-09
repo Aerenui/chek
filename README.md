@@ -7,7 +7,7 @@ Supports only one data type `int` which is 32-bit signed integer. There are **no
 
 Usage:
 ```bash
-scic2 [-o <out>] [-f win64|elf64] <src>
+scic2 [-o <out>] [-t win64|elf64] <src>
 ```
 
 ## building from source (linux)

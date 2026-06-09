@@ -23,8 +23,8 @@ StringView SV_lrslice_from_SV(const StringView*, size_t, size_t);
 
 void SV_p_printf(const StringView*);
 
-bool SV__pp_cmp_eq(const StringView*, const StringView*);
-bool SV__pv_cmp_eq(const StringView*, const char*, const size_t);
+bool SV_pp_cmp_eq(const StringView*, const StringView*);
+bool SV_pv_cmp_eq(const StringView*, const char*, size_t);
 
 
 const char* SV_to__c_string(const StringView*);

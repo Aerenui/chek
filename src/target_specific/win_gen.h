@@ -2,7 +2,7 @@
 #define SIMPLECOMPILERINC_2_WIN_GEN_H
 #include <stdint.h>
 
-#include "emit.h"
+#include "../emit.h"
 
 #define DOS_HDR_SZ 64
 
@@ -25,8 +25,8 @@
 // void write_win64(const char*, const uint8_t*, size_t, uint64_t, FunctionsRegistry*, uint64_t str_consts_load_addr, StringViewList* string_consts, uint32_t num_sections, StringViewList importing_funcs, uint64_t import_table_load_addr, size_t bss_size);
 void write_win64(const char* path,
                  uint8_t* code, size_t code_len, uint64_t load_addr,
-                 FunctionsRegistry* fr,
-                 StringViewList* string_consts, StringConstAddrRelocationList* string_consts_relocations,
+                 const FunctionsRegistry* fr,
+                 const StringViewList* string_consts, const StringConstAddrRelocationList* string_consts_relocations,
                  uint32_t num_sections, StringViewList importing_funcs,
                  // uint64_t import_table_load_addr,
                  size_t bss_size, size_t bss_init_code_len
