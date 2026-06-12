@@ -111,6 +111,13 @@ inline bool SV_pv_cmp_eq(const StringView* restrict sv1, const char* restrict sv
     return memcmp(sv1->start, sv2, sv1->len) == 0;
 }
 
+inline bool SV_pv_starts_with(const StringView* restrict sv, const char* restrict arr, const size_t arr_len) {
+    if (sv->len < arr_len) {
+        return false;
+    }
+    return memcmp(sv->start, arr, arr_len) == 0;
+}
+
 inline StringView SV_lslice_from_SV(const StringView* sv, const size_t new_size) {
     assert(sv->len >= new_size);
     return (StringView) { .start = sv->start, .len = new_size };
@@ -138,8 +145,8 @@ StringViewList SV_p_split_by_char(const StringView* sv, const char c) {
     return ot;
 }
 
-
-const char* SV_to__c_string(const StringView* sv) {
+// returns allocated buffer
+const char* SV_to_c_string(const StringView* sv) {
     char* ot = malloc(sv->len+1);
     assert(ot != NULL);
     memcpy(ot, sv->start, sv->len);

@@ -1,7 +1,20 @@
-int a: 97;
-if 1 < 2 then
-    set a: a + 2;
-else
-    set a: a - 1;
+include "libs/print_int.cm";
+
+int main()
+    int a: 97;
+    if 1 < 2 then
+        set a: a + 2;
+    else
+        set a: a - 1;
+    end
+    print a 10;
+
+
+    if 1 > 2 then
+        call print_int(100); print 10;
+    else
+        call print_int(333); print 10;
+    end
+
+    return 0;
 end
-print a 10;

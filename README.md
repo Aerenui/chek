@@ -7,7 +7,7 @@ Supports only one data type `int` which is 32-bit signed integer. There are **no
 
 Usage:
 ```bash
-scic2 [-o <out>] [-t win64|elf64] <src>
+compiler [-o <out>] [-O <opt_level>] [-t win64|elf64] <src>
 ```
 
 ## building from source (linux)
@@ -106,9 +106,10 @@ call print_int(123); # this is comment
 
 ### print
 > print <expr> <expr> ...;
+Prints ASCII codes.
 ```
 print 10; # prints new line (\n in asci 10)
-print 97 98; # prints 'ab'
+print 97 98; # prints 'ab' (97 -> a, 98 -> b)
 ```
 
 ### if conditional

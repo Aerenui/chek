@@ -2,7 +2,7 @@
 #define SIMPLECOMPILERINC_2_WIN_GEN_H
 #include <stdint.h>
 
-#include "../emit.h"
+#include "../codegen.h"
 
 #define DOS_HDR_SZ 64
 

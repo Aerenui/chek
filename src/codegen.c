@@ -2,10 +2,11 @@
 // Created by frantisek on 25. 5. 2026.
 //
 
-#include "emit.h"
+#include "codegen.h"
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "compiler.h"
@@ -137,7 +138,7 @@ void LL_push(LabelList* ll, Label l) {
 void resolve_relocations(const ByteSeg* restrict buf, const RelocationList* restrict rels, const LabelList* restrict labels) {
     for (size_t i = 0; i < rels->len; i++) {
         const Relocation *r = &rels->array[i];
-        Label* target = NULL;
+        const Label* target = NULL;
         for (size_t j = 0; j < labels->len; j++) {
             if (labels->array[j].id == r->id && labels->array[j].kind == r->kind) {
                 target = &labels->array[j];
@@ -167,9 +168,22 @@ void emit_mov_eax(ByteSeg* out, const Loc loc, GlobalPatchList* gpl, const Compi
         case LOC_VAR:
         case LOC_STACK_SLOT: {
             const int slot = (loc.kind == LOC_VAR) ? lookup_var(loc.var) : loc.offset;
-            BS_write(out, 0x8B);
-            BS_write(out, 0x45);
-            BS_write(out, (uint8_t)(-slot));
+            if (slot <= 128) {
+                BS_write(out, 0x8B);
+                BS_write(out, 0x45);
+                BS_write(out, (uint8_t)(-slot));
+            } else {
+                const int32_t disp = -slot;
+
+                BS_write(out, 0x8B);
+                BS_write(out, 0x85);         // ModR/M for [rbp + disp32]
+
+                // Write the 32-bit negative displacement (Little-Endian)
+                BS_write(out, (uint8_t)(disp & 0xFF));
+                BS_write(out, (uint8_t)((disp >> 8) & 0xFF));
+                BS_write(out, (uint8_t)((disp >> 16) & 0xFF));
+                BS_write(out, (uint8_t)((disp >> 24) & 0xFF));
+            }
             break;
         }
         case LOC_GLOBAL: {
@@ -223,9 +237,23 @@ void emit_op_eax(ByteSeg* restrict out, const uint8_t opcode, const Loc src, Glo
         case LOC_VAR:
         case LOC_STACK_SLOT: {
             const int slot = (src.kind == LOC_VAR) ? lookup_var(src.var) : src.offset;
+            if (slot <= 128) {
             BS_write(out, opcode);
             BS_write(out, 0x45);
             BS_write(out, (uint8_t)(-slot));
+            } else {
+                // 32-bit displacement path
+                const int32_t disp = -slot;
+
+                BS_write(out, opcode);
+                BS_write(out, 0x85);               // ModR/M for [rbp + disp32]
+
+                // Write 32-bit negative displacement (Little-Endian)
+                BS_write(out, (uint8_t)(disp & 0xFF));
+                BS_write(out, (uint8_t)((disp >> 8) & 0xFF));
+                BS_write(out, (uint8_t)((disp >> 16) & 0xFF));
+                BS_write(out, (uint8_t)((disp >> 24) & 0xFF));
+            }
             break;
         }
         case LOC_GLOBAL: {
@@ -282,10 +310,25 @@ void emit_imul_eax(ByteSeg* restrict out, const Loc src, GlobalPatchList* restri
         case LOC_VAR:
         case LOC_STACK_SLOT: {
             const int slot = (src.kind == LOC_VAR) ? lookup_var(src.var) : src.offset;
-            BS_write(out, 0x0F);
-            BS_write(out, 0xAF);
-            BS_write(out, 0x45);
-            BS_write(out, (uint8_t)(-slot));
+            if (slot <= 128) {
+                BS_write(out, 0x0F);
+                BS_write(out, 0xAF);
+                BS_write(out, 0x45);
+                BS_write(out, (uint8_t)(-slot));
+            } else {
+                // 32-bit displacement path
+                const int32_t disp = -slot;
+
+                BS_write(out, 0x0F);
+                BS_write(out, 0xAF);
+                BS_write(out, 0x85);               // ModR/M for [rbp + disp32]
+
+                // Write 32-bit negative displacement (Little-Endian)
+                BS_write(out, (uint8_t)(disp & 0xFF));
+                BS_write(out, (uint8_t)((disp >> 8) & 0xFF));
+                BS_write(out, (uint8_t)((disp >> 16) & 0xFF));
+                BS_write(out, (uint8_t)((disp >> 24) & 0xFF));
+            }
             break;
         }
         case LOC_GLOBAL: {
@@ -332,31 +375,6 @@ void emit_imul_eax(ByteSeg* restrict out, const Loc src, GlobalPatchList* restri
 }
 
 
-void emit_jmp(ByteSeg* restrict buf, RelocationList* restrict rels, const size_t id, const RelKind kind) {
-    BS_write(buf, 0xE9);
-    const size_t patch_pos = BS_get_cursor(buf);
-    BS_write_array(buf, 4, (uint8_t[]){0, 0, 0, 0});
-    RL_push(rels, (Relocation){
-        .patch_pos  = patch_pos,
-        .patch_size = 4,
-        .inst_end   = BS_get_cursor(buf),
-        .id         = id,
-        .kind       = kind,
-    });
-}
-
-void emit_je(ByteSeg* restrict buf, RelocationList* restrict rels, const size_t id, const RelKind kind) {
-    BS_write_array(buf, 2, (uint8_t[]){0x0F, 0x84});
-    size_t patch_pos = BS_get_cursor(buf);
-    BS_write_array(buf, 4, (uint8_t[]){0, 0, 0, 0});
-    RL_push(rels, (Relocation){
-        .patch_pos  = patch_pos,
-        .patch_size = 4,
-        .inst_end   = BS_get_cursor(buf),
-        .id         = id,
-        .kind       = kind,
-    });
-}
 
 // -----------------------------------------------------------------------------------------
 

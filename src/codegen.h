@@ -1,7 +1,3 @@
-//
-// Created by frantisek on 25. 5. 2026.
-//
-
 #ifndef SIMPLECOMPILERINC_2_EMIT_H
 #define SIMPLECOMPILERINC_2_EMIT_H
 #include "main.h"
@@ -44,27 +40,10 @@ Loc LS_peek(LocStack*);
 
 void LS_free(LocStack*);
 
-// ---------------------------------------------------
-
-// void emit_mov_eax(ByteSeg*, Loc);
-
-// void emit_op_eax(ByteSeg*, uint8_t, Loc);
-
-// void emit_imul_eax(ByteSeg*, Loc);
 
 // -----------------------------------------------------------------------------------------
 
-/*typedef struct {
-    size_t patch_pos; // offset in buffer to overwrite
-    size_t patch_size; // bytes to write: 1, 2, or 4
-    StringView label; // target label name (points into source)
-    size_t inst_end; // offset of byte after this instruction (for rel32 calc)
-} Relocation;
 
-typedef struct {
-    StringView label; // points into source
-    size_t offset; // byte offset in buffer where this label is defined
-} Label;*/
 typedef enum { REL_ELSE, REL_END, REL_LOOP } RelKind;
 
 typedef struct {
@@ -108,13 +87,6 @@ LabelList LL_new(void);
 void LL_free(LabelList*);
 
 void LL_push(LabelList*, Label);
-
-
-// -----------------------------------------------------------------------------------------
-
-// void emit_jmp_label(ByteSeg* buf, RelocationList* rels, StringView label);
-
-// void emit_je_label(ByteSeg* buf, RelocationList* rels, StringView label);
 
 // -----------------------------------------------------------------------------------------
 

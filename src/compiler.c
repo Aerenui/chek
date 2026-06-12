@@ -147,11 +147,22 @@ void get_stmt(StringViewListView*, bool, CompilerTarget);
 
 bool is_operator(char);
 
-int lookup_var(StringView name) {
+int lookup_var(const StringView name) {
     for (size_t i = var_table_length; i-- > 0;) {
         // reversed to find the most inner one
         if (SV_pp_cmp_eq(&var_table[i].name, &name))
             return var_table[i].offset;
+    }
+    // not found — should not happen if the parser is correct
+    fprintf(stderr, "[ERROR] <internal> lookup_var | undefined variable: %.*s\n", (int) name.len, name.start);
+    exit(1);
+}
+
+VarEntry* get_var(const StringView name) {
+    for (size_t i = var_table_length; i-- > 0;) {
+        // reversed to find the most inner one
+        if (SV_pp_cmp_eq(&var_table[i].name, &name))
+            return &var_table[i];
     }
     // not found — should not happen if the parser is correct
     fprintf(stderr, "[ERROR] <internal> lookup_var | undefined variable: %.*s\n", (int) name.len, name.start);
@@ -171,19 +182,64 @@ bool exists_var(const StringView name) {
     return false;
 }
 
-int declare_var(StringView name) {
-    int slot = alloc_stack_slot(&frame);
+int declare_var(const StringView name, const VarMaterialization vm, const int vm_value) {
+
     if (var_table_length + 1 > var_table_cap) {
         var_table_cap *= 2;
         VarEntry* new_array = realloc(var_table, sizeof(VarEntry) * var_table_cap);
         assert(new_array != NULL);
         var_table = new_array;
     }
-    var_table[var_table_length++] = (VarEntry){.name = name, .offset = slot};
-    return slot;
+
+    switch (vm) {
+        case VM_RUNTIME: {
+            const int slot = alloc_stack_slot(&frame);
+            var_table[var_table_length++] = (VarEntry){.name = name, .offset = slot, .vm = VM_RUNTIME, .vm_value = 0};
+            return slot;
+        }
+        case VM_CONST: {
+            var_table[var_table_length++] = (VarEntry){.name = name, .offset = 0, .vm = VM_CONST, .vm_value = vm_value};
+            return -1;
+        }
+    }
+    fprintf(stderr, "[ERROR] <internal> in declare_var | switch invalid path\n");
+    exit(1);
 }
 
 
+void materialize_const_var(VarEntry* var, bool include_value) {
+    const int slot = alloc_stack_slot(&frame);
+
+    if (include_value) {
+        // write value to stack
+        BS_write(code_output, 0xC7);
+        BS_write(code_output, 0x45);
+        BS_write(code_output, (uint8_t) (-slot));
+        BS_write(code_output, (var->vm_value >> 0) & 0xFF);
+        BS_write(code_output, (var->vm_value >> 8) & 0xFF);
+        BS_write(code_output, (var->vm_value >> 16) & 0xFF);
+        BS_write(code_output, (var->vm_value >> 24) & 0xFF);
+    }
+
+    var->offset = slot;
+    var->vm = VM_RUNTIME;
+    var->vm_value = 0;
+}
+
+void materialize_const_variables(void) {
+    if (!compiler_flags.constant_variable_resolution) return;
+
+    for (size_t n=0; n < var_table_length; n++ ) {
+        VarEntry* var = &var_table[n];
+
+        if (var->vm == VM_CONST) {
+            materialize_const_var(var, true);
+        }
+    }
+}
+
+// tokenization function
+// needed only in compile(), therefore file-local
 StringViewList p_tokenize(const StringView* sv) {
     StringViewList ot = SVL_new();
     size_t i = 0;
@@ -230,7 +286,7 @@ StringViewList p_tokenize(const StringView* sv) {
 
 bool is_stmt_next(StringViewListView* view) {
     if (view->len < 1) return false;
-    StringView s1 = SVLV_inspect_back(view);
+    const StringView s1 = SVLV_inspect_back(view);
     if (SV_pv_cmp_eq(&s1, "int", 3)) return true;
     if (SV_pv_cmp_eq(&s1, "set", 3)) return true;
     if (SV_pv_cmp_eq(&s1, "if", 2)) return true;
@@ -243,7 +299,7 @@ bool is_stmt_next(StringViewListView* view) {
 
 bool is_stmt_next_return(StringViewListView* view) {
     if (view->len < 1) return false;
-    StringView s1 = SVLV_inspect_back(view);
+    const StringView s1 = SVLV_inspect_back(view);
     if (SV_pv_cmp_eq(&s1, "return", 6)) return true;
 
     return false;
@@ -251,7 +307,7 @@ bool is_stmt_next_return(StringViewListView* view) {
 
 
 void get_semicolon(StringViewListView* view) {
-    const StringView last_token = view->array[-1];
+    const StringView last_token = view->array[-1]; // based on language syntax, this should never cause problems
     const StringView semicolon = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&semicolon, ";", 1)) {
         const char* error_pos = last_token.start + last_token.len;
@@ -268,7 +324,7 @@ void get_return_stmt(StringViewListView* view, const bool should_return_value, c
         exit(1);
     }
 
-    StringView semi_or_val = SVLV_inspect_back(view);
+    const StringView semi_or_val = SVLV_inspect_back(view);
     if (SV_pv_cmp_eq(&semi_or_val, ";", 1)) {
         if (should_return_value) {
             srcmap_error(&source_map, semi_or_val.start, "unexpected ';' for int function, expected return value");
@@ -280,9 +336,11 @@ void get_return_stmt(StringViewListView* view, const bool should_return_value, c
             srcmap_error(&source_map, semi_or_val.start, "expected ';' for void function, got '%.*s'", (int)semi_or_val.len, semi_or_val.start);
             exit(1);
         }
-        Loc val = get_int_expr(view, target, true);
-        get_semicolon(view);
+        const Loc val = get_int_expr(view, target, true);
         emit_mov_eax(code_output, val, &global_patch_list, target);
+
+        get_semicolon(view);
+
     }
 
     // JMP fn_end_<id> (placeholder)
@@ -313,25 +371,45 @@ void get_stmt_block(StringViewListView* view, const bool should_return_value, co
 
 
 void get_int_var_dec(StringViewListView* view, const CompilerTarget target) {
-    StringView var_name = SVLV_consume_one(view);
-    int slot = declare_var(var_name);
+    const StringView var_name = SVLV_consume_one(view);
 
-    StringView assign = SVLV_consume_one(view);
+
+    const StringView assign = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&assign, ":", 1)) {
         // error
         srcmap_error(&source_map, assign.start, "expected ':' in variable declaration, got '%.*s'", (int)assign.len, assign.start);
         exit(1);
     }
 
-    Loc last = get_int_expr(view, target, true);
+    const Loc last = get_int_expr(view, target, true);
+    if (compiler_flags.constant_variable_resolution && last.kind == LOC_IMMEDIATE) {
+        declare_var(var_name, VM_CONST, last.value);
 
-    // move last into eax
-    emit_mov_eax(code_output, last, &global_patch_list, target);
+    } else {
+        const int slot = declare_var(var_name, VM_RUNTIME, 0);
 
-    // MOV [rbp - slot], eax
-    BS_write(code_output, 0x89);
-    BS_write(code_output, 0x45);
-    BS_write(code_output, (uint8_t) (-slot));
+        // move last into eax
+        emit_mov_eax(code_output, last, &global_patch_list, target);
+
+        // MOV [rbp - slot], eax
+        if (slot <= 128) {
+            BS_write(code_output, 0x89);
+            BS_write(code_output, 0x45);
+            BS_write(code_output, (uint8_t) (-slot));
+        } else {
+            // 32-bit displacement path
+            const int32_t disp = -slot;
+
+            BS_write(code_output, 0x89);
+            BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
+
+            // Write 32-bit negative displacement (Little-Endian)
+            BS_write(code_output, (uint8_t)(disp & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+        }
+    }
 
     get_semicolon(view);
 }
@@ -357,7 +435,22 @@ void get_int_var_set(StringViewListView* view, const CompilerTarget target) {
         exit(1);
     }
 
-    Loc last = get_int_expr(view, target, true);
+    const Loc last = get_int_expr(view, target, true);
+
+    if (compiler_flags.constant_variable_resolution) {
+        if (is_local) {
+            VarEntry* var = get_var(var_name);
+            if (var->vm == VM_CONST) {
+                if (last.kind == LOC_IMMEDIATE) {
+                    var->vm_value = last.value;
+                    get_semicolon(view);
+                    return;
+                } else {
+                    materialize_const_var(var, true);
+                }
+            }
+        }
+    }
 
 
     // move last into eax
@@ -366,13 +459,27 @@ void get_int_var_set(StringViewListView* view, const CompilerTarget target) {
 
     if (is_local) {
         // MOV [rbp - slot], eax
-        BS_write(code_output, 0x89);
-        BS_write(code_output, 0x45);
-        BS_write(code_output, (uint8_t) (-slot));
+        if (slot <= 128) {
+            BS_write(code_output, 0x89);
+            BS_write(code_output, 0x45);
+            BS_write(code_output, (uint8_t) (-slot));
+        } else {
+            // 32-bit displacement path
+            const int32_t disp = -slot;
+
+            BS_write(code_output, 0x89);
+            BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
+
+            // Write 32-bit negative displacement (Little-Endian)
+            BS_write(code_output, (uint8_t)(disp & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+        }
     } else {
         switch (target) {
         case F_Elf64: {
-            size_t pos = BS_get_cursor(code_output) + 3;
+            const size_t pos = BS_get_cursor(code_output) + 3;
             uint8_t store[] = {
                 0x89, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00, // mov [addr32], eax
             };
@@ -390,7 +497,7 @@ void get_int_var_set(StringViewListView* view, const CompilerTarget target) {
             break;
         }
         case F_Win64: {
-            size_t pos = BS_get_cursor(code_output) + 2;
+            const size_t pos = BS_get_cursor(code_output) + 2;
             uint8_t store[] = {
                 0x48, 0xB9, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rcx, imm64
                 0x89, 0x01, // mov [rcx], eax
@@ -415,15 +522,66 @@ void get_int_var_set(StringViewListView* view, const CompilerTarget target) {
     get_semicolon(view);
 }
 
+void get_stmt_block_discard(StringViewListView* view) {
+    int depth = 1;
+    while (1) {
+        const StringView tok = SVLV_inspect_back(view); // peek, don't consume
+        if (depth == 1 && SV_pv_cmp_eq(&tok, "end", 3)) return; // leave it for caller
+        if (depth == 1 && SV_pv_cmp_eq(&tok, "else", 4)) return; // same for else
+        SVLV_consume_one(view);
+        if (SV_pv_cmp_eq(&tok, "if", 2))   depth++;
+        if (SV_pv_cmp_eq(&tok, "while", 5)) depth++;
+        if (SV_pv_cmp_eq(&tok, "end", 3))  depth--;
+    }
+}
+
 
 void get_if_conditional(StringViewListView* view, const bool should_return_value, const CompilerTarget target) {
     const Loc cond = get_int_expr(view, target, true);
 
-    StringView then = SVLV_consume_one(view);
+    const bool do_constant_branch_evaluation = compiler_flags.constant_branch_evaluation && cond.kind == LOC_IMMEDIATE;
+
+    const StringView then = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&then, "then", 4)) {
         srcmap_error(&source_map, then.start, "expected 'then' after expression in if conditional, got '%.*s'", (int)then.len, then.start);
         exit(1);
     }
+
+    if (do_constant_branch_evaluation) {
+        const bool cond_true = cond.value != 0;
+
+
+        if (cond_true) {
+            // compile then-block normally
+            get_stmt_block(view, should_return_value, target);
+
+            // skip else-block if present (consume tokens without emitting)
+            const StringView else_keyword = SVLV_inspect_back(view);
+            if (SV_pv_cmp_eq(&else_keyword, "else", 4)) {
+                SVLV_consume_one(view);
+                get_stmt_block_discard(view); // consume tokens, emit nothing
+            }
+        } else {
+            // skip then-block
+            get_stmt_block_discard(view);
+
+            const StringView else_keyword = SVLV_inspect_back(view);
+            if (SV_pv_cmp_eq(&else_keyword, "else", 4)) {
+                SVLV_consume_one(view);
+                get_stmt_block(view, should_return_value, target); // compile else normally
+            }
+            // no else: nothing emitted at all
+        }
+
+        const StringView end = SVLV_consume_one(view);
+        if (!SV_pv_cmp_eq(&end, "end", 3)) {
+            srcmap_error(&source_map, end.start, "expected 'end' after if conditional, got '%.*s'", (int)end.len, end.start);
+            exit(1);
+        }
+        return;
+    }
+
+    materialize_const_variables();
 
     const size_t id = label_cnt++;
 
@@ -433,8 +591,8 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
 
     // JE else_<id> (placeholder)
     BS_write_array(code_output, 2, (uint8_t[]){0x0F, 0x84});
-    size_t je_patch = BS_get_cursor(code_output);
-    size_t je_end = je_patch + 4;
+    const size_t je_patch = BS_get_cursor(code_output);
+    const size_t je_end = je_patch + 4;
     BS_write_array(code_output, 4, (uint8_t[]){0x00, 0x00, 0x00, 0x00});
     RL_push(&relocations, (Relocation){
                 .patch_pos = je_patch,
@@ -444,12 +602,15 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
                 .kind = REL_ELSE,
             });
 
-    const int frame_next_offset_snapshot = get_frame()->next_offset;
-    const size_t var_table_length_snapshot = var_table_length;
+    int frame_next_offset_snapshot = get_frame()->next_offset;
+    size_t var_table_length_snapshot = var_table_length;
 
     get_stmt_block(view, should_return_value, target);
 
-    StringView else_keyword = SVLV_inspect_back(view);
+    get_frame()->next_offset = frame_next_offset_snapshot;
+    var_table_length = var_table_length_snapshot;
+
+    const StringView else_keyword = SVLV_inspect_back(view);
     if (SV_pv_cmp_eq(&else_keyword, "else", 4)) {
         SVLV_consume_one(view);
 
@@ -469,7 +630,14 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
         // define else_<id>
         LL_push(&labels, (Label){.offset = BS_get_cursor(code_output), .id = id, .kind = REL_ELSE});
 
+
+        frame_next_offset_snapshot = get_frame()->next_offset;
+        var_table_length_snapshot = var_table_length;
+
         get_stmt_block(view, should_return_value, target);
+
+        get_frame()->next_offset = frame_next_offset_snapshot;
+        var_table_length = var_table_length_snapshot;
     } else {
         // no else — JE jumps directly to end, define else_<id> here as same as end
         LL_push(&labels, (Label){.offset = BS_get_cursor(code_output), .id = id, .kind = REL_ELSE});
@@ -478,30 +646,41 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
     // define end_<id>
     LL_push(&labels, (Label){.offset = BS_get_cursor(code_output), .id = id, .kind = REL_END});
 
-    StringView end = SVLV_consume_one(view);
+    const StringView end = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&end, "end", 3)) {
         srcmap_error(&source_map, end.start, "expected 'end' after if conditional, got '%.*s'", (int)end.len, end.start);
         exit(1);
     }
-
-
-    get_frame()->next_offset = frame_next_offset_snapshot;
-    var_table_length = var_table_length_snapshot;
 }
 
 void get_while_conditional(StringViewListView* view, const bool should_return_value, const CompilerTarget target) {
+
     const size_t id = label_cnt++;
 
-    // define loop_<id> (loop back target)
-    LL_push(&labels, (Label){.offset = BS_get_cursor(code_output), .id = id, .kind = REL_LOOP});
+    const size_t loop_cursor = BS_get_cursor(code_output);
 
     const Loc cond = get_int_expr(view, target, true);
 
-    StringView do_keyword = SVLV_consume_one(view);
+    const StringView do_keyword = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&do_keyword, "do", 2)) {
         srcmap_error(&source_map, do_keyword.start, "expected 'do' after expression in while conditional, got '%.*s'", (int)do_keyword.len, do_keyword.start);
         exit(1);
     }
+
+    if (compiler_flags.constant_branch_evaluation && cond.kind == LOC_IMMEDIATE && cond.value == 0) {
+        // discard `while 0 do ... end`
+        get_stmt_block_discard(view);
+        const StringView end = SVLV_consume_one(view);
+        if (!SV_pv_cmp_eq(&end, "end", 3)) {
+            srcmap_error(&source_map, end.start, "expected 'end' after while conditional, got '%.*s'", (int)end.len, end.start);
+            exit(1);
+        }
+        return;
+    }
+
+    // define loop_<id> (loop back target)
+    LL_push(&labels, (Label){.offset = loop_cursor, .id = id, .kind = REL_LOOP});
+
 
     // TEST eax, eax
     emit_mov_eax(code_output, cond, &global_patch_list, target);
@@ -521,12 +700,18 @@ void get_while_conditional(StringViewListView* view, const bool should_return_va
             });
 
     // body
+    const int frame_next_offset_snapshot = get_frame()->next_offset;
+    const size_t var_table_length_snapshot = var_table_length;
+
     get_stmt_block(view, should_return_value, target);
+
+    get_frame()->next_offset = frame_next_offset_snapshot;
+    var_table_length = var_table_length_snapshot;
 
     // JMP loop_<id> (placeholder)
     BS_write(code_output, 0xE9);
-    size_t jmp_patch = BS_get_cursor(code_output);
-    size_t jmp_end = jmp_patch + 4;
+    const size_t jmp_patch = BS_get_cursor(code_output);
+    const size_t jmp_end = jmp_patch + 4;
     BS_write_array(code_output, 4, (uint8_t[]){0x00, 0x00, 0x00, 0x00});
     RL_push(&relocations, (Relocation){
                 .patch_pos = jmp_patch,
@@ -539,231 +724,131 @@ void get_while_conditional(StringViewListView* view, const bool should_return_va
     // define end_<id>
     LL_push(&labels, (Label){.offset = BS_get_cursor(code_output), .id = id, .kind = REL_END});
 
-    StringView end = SVLV_consume_one(view);
+    const StringView end = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&end, "end", 3)) {
         srcmap_error(&source_map, end.start, "expected 'end' after while conditional, got '%.*s'", (int)end.len, end.start);
         exit(1);
     }
 }
 
-// messses stack
+
 void get_print_stmt(StringViewListView* view, const CompilerTarget target) {
     while (view->len > 0) {
-        StringView inspect = SVLV_inspect_back(view);
+        const StringView inspect = SVLV_inspect_back(view);
         if (inspect.start[0] == ';') {
             break;
         }
-        Loc expr = get_int_expr(view, target, true);
-        /*
-        %7 = load i32, ptr %c, align 4
-        call void @a(i32 noundef %7)
-         */
-        // printf("  call void @print_num(i32 noundef %.*s)\n", (int)expr.len, expr.start);
+        const Loc expr = get_int_expr(view, target, true);
+
+        // puts address of char into RAX and calls __print_char
         switch (expr.kind) {
             case LOC_IMMEDIATE:
-            case LOC_STACK_SLOT: {
+            case LOC_STACK_SLOT:
+            case LOC_GLOBAL: {
                 emit_mov_eax(code_output, expr, &global_patch_list, target);
-
+                const int slot = alloc_tmp_stack_slot(&frame);
                 // mov [rbp - offset], eax
-                int offset = alloc_tmp_stack_slot(&frame);
+                if (slot <= 128) {
+                    BS_write(code_output, 0x89);
+                    BS_write(code_output, 0x45);
+                    BS_write(code_output, (uint8_t) (-slot));
+                } else {
+                    // 32-bit displacement path
+                    const int32_t disp = -slot;
 
+                    BS_write(code_output, 0x89);
+                    BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
 
-                if (target == F_Elf64) {
-                    BS_write_array(code_output, 3, (uint8_t[]){0x89, 0x45, (uint8_t) (-offset)});
+                    // Write 32-bit negative displacement (Little-Endian)
+                    BS_write(code_output, (uint8_t)(disp & 0xFF));
+                    BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+                    BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+                    BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+                }
 
-                    // mov rax, 1  (sys_write)
-                    // mov rdi, 1  (stdout)
-                    BS_write_array(code_output, 14, (uint8_t[]){
-                                       0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00,
-                                       0x00
-                                   });
-
-                    // lea rsi, [rbp - offset]
+                // lea rax, [rbp - offset]
+                if (slot <= 128) {
+                    // 8-bit displacement path
                     BS_write(code_output, 0x48);
                     BS_write(code_output, 0x8D);
-                    BS_write(code_output, 0x75);
-                    BS_write(code_output, (uint8_t) (-offset));
+                    BS_write(code_output, 0x45);               // ModR/M for [rbp + disp8]
+                    BS_write(code_output, (uint8_t)(-slot));
+                } else {
+                    // 32-bit displacement path
+                    const int32_t disp = -slot;
 
-                    // mov rdx, 1  +  syscall
-                    BS_write_array(code_output, 9, (uint8_t[]){0x48, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x0F, 0x05});
-                } else if (target == F_Win64) {
-                    // 48 83 ec 38             sub    rsp,0x38
-                    BS_write_array(code_output, 4, (uint8_t[]){0x48, 0x83, 0xEC, 0x38});
+                    BS_write(code_output, 0x48);
+                    BS_write(code_output, 0x8D);
+                    BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
 
-                    BS_write_array(code_output, 3, (uint8_t[]){0x89, 0x45, (uint8_t) (-offset)});
-                    /*
-                    48 c7 c1 f5 ff ff ff    mov    rcx,0xfffffffffffffff5
-                    48 b8 00 10 00 40 01    movabs rax,0x140001000
-                    00 00 00
-                    ff 10                   call   QWORD PTR [rax]
-                    49 89 c4                mov    r12,rax; get std handle
-                    */
-                    uint8_t get_std_handle[] = {
-                        // 0x48, 0x83, 0xC4, 0x38,
-                        0x48, 0xC7, 0xC1, 0xF5, 0xFF, 0xFF, 0xFF, 0x48, 0xB8, 0x00, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00,
-                        0x00, 0xFF, 0x10, 0x49, 0x89, 0xC4,
-                    };
-                    BS_write_array(code_output, sizeof(get_std_handle), get_std_handle);
-                    /*
-                    48 c7 44 24 20 00 00    mov    QWORD PTR [rsp+0x20],0x0
-                    00 00
-                    4c 8d 4c 24 28          lea    r9,[rsp+0x28]
-                    48 c7 c2 00 00 01 00    mov    rdx,0x10000
-                    49 c7 c0 01 00 00 00    mov    r8,0x1
-                    48 b8 08 10 00 40 01    movabs rax,0x140001008
-                    00 00 00
-                    ff 10                   call   QWORD PTR [rax]
-                     */
-                    // lea rdx, [rbp - offset]
-                    BS_write(code_output, 0x48); // REX.W prefix
-                    BS_write(code_output, 0x8D); // LEA opcode
-                    BS_write(code_output, 0x55); // ModR/M byte (destination is rdx)
-                    BS_write(code_output, (uint8_t) (-offset));
-                    uint8_t write_to_std[] = {
-                        0x48, 0xC7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00, 0x4C, 0x8D, 0x4C, 0x24, 0x28, 0x4c, 0x89,
-                        0xe1,
-                        // 0x48, 0xC7, 0xC2, 0x00, 0x00, 0x01, 0x00, // val - mov    rdx,0x10000
-
-                        0x49, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xB8, 0x08, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00,
-                        0x00, 0xFF, 0x10
-                    };
-                    BS_write_array(code_output, sizeof(write_to_std), write_to_std);
-
-                    // 48 83 c4 38             add    rsp,0x38
-                    BS_write_array(code_output, 4, (uint8_t[]){0x48, 0x83, 0xC4, 0x38,});
+                    // Write 32-bit negative displacement (Little-Endian)
+                    BS_write(code_output, (uint8_t)(disp & 0xFF));
+                    BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+                    BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+                    BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
                 }
                 break;
             }
             case LOC_VAR: {
-                if (target == F_Elf64) {
-                    // 0:  48 c7 c0 01 00 00 00    mov    rax,0x1
-                    // 7:  48 c7 c7 01 00 00 00    mov    rdi,0x1
-                    BS_write_array(code_output, 14, (uint8_t[]){
-                                       0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00,
-                                       0x00
-                                   });
+                const int slot = lookup_var(expr.var);
 
-                    int slot = lookup_var(expr.var);
-                    BS_write(code_output, 0x48); // REX.W prefix
-                    BS_write(code_output, 0x8D); // Opcode for LEA
-                    BS_write(code_output, 0x75); // ModR/M byte for rsi, [rbp + disp8]
-                    BS_write(code_output, (uint8_t) (-slot)); // 8-bit negative displacement
 
-                    // 15: 48 c7 c2 01 00 00 00    mov    rdx,0x1
-                    // 1c: 0f 05                   syscall
-                    BS_write_array(code_output, 9, (uint8_t[]){0x48, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x0F, 0x05});
-                } else if (target == F_Win64) {
-                    // 48 83 ec 38             sub    rsp,0x38
-                    BS_write_array(code_output, 4, (uint8_t[]){0x48, 0x83, 0xEC, 0x38});
+                // lea rax, [rbp - offset]
+                if (slot <= 128) {
+                    // 8-bit displacement path
+                    BS_write(code_output, 0x48);
+                    BS_write(code_output, 0x8D);
+                    BS_write(code_output, 0x45);               // ModR/M for [rbp + disp8]
+                    BS_write(code_output, (uint8_t)(-slot));
+                } else {
+                    // 32-bit displacement path
+                    const int32_t disp = -slot;
 
-                    // BS_write_array(code_output, 3, (uint8_t[]){0x89, 0x45, (uint8_t) (-offset)});
-                    /*
-                    48 c7 c1 f5 ff ff ff    mov    rcx,0xfffffffffffffff5
-                    48 b8 00 10 00 40 01    movabs rax,0x140001000
-                    00 00 00
-                    ff 10                   call   QWORD PTR [rax]
-                    49 89 c4                mov    r12,rax; get std handle*/
-                    uint8_t get_std_handle[] = {
-                        // 0x48, 0x83, 0xC4, 0x38,
-                        0x48, 0xC7, 0xC1, 0xF5, 0xFF, 0xFF, 0xFF, 0x48, 0xB8, 0x00, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00,
-                        0x00, 0xFF, 0x10, 0x49, 0x89, 0xC4,
-                    };
-                    BS_write_array(code_output, sizeof(get_std_handle), get_std_handle);
-                    /*
-                    48 c7 44 24 20 00 00    mov    QWORD PTR [rsp+0x20],0x0
-                    00 00
-                    4c 8d 4c 24 28          lea    r9,[rsp+0x28]
-                    48 c7 c2 00 00 01 00    mov    rdx,0x10000
-                    49 c7 c0 01 00 00 00    mov    r8,0x1
-                    48 b8 08 10 00 40 01    movabs rax,0x140001008
-                    00 00 00
-                    ff 10                   call   QWORD PTR [rax]
-                     */
-                    int offset = lookup_var(expr.var);
-                    // lea rdx, [rbp - offset]
-                    BS_write(code_output, 0x48); // REX.W prefix
-                    BS_write(code_output, 0x8D); // LEA opcode
-                    BS_write(code_output, 0x55); // ModR/M byte (destination is rdx)
-                    BS_write(code_output, (uint8_t) (-offset));
-                    uint8_t write_to_std[] = {
-                        0x48, 0xC7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00, 0x4C, 0x8D, 0x4C, 0x24, 0x28, 0x4c, 0x89,
-                        0xe1,
-                        // 0x48, 0xC7, 0xC2, 0x00, 0x00, 0x01, 0x00, // val - mov    rdx,0x10000
+                    BS_write(code_output, 0x48);
+                    BS_write(code_output, 0x8D);
+                    BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
 
-                        0x49, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0x48, 0xB8, 0x08, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00,
-                        0x00, 0xFF, 0x10
-                    };
-                    BS_write_array(code_output, sizeof(write_to_std), write_to_std);
-
-                    // 48 83 c4 38             add    rsp,0x38
-                    BS_write_array(code_output, 4, (uint8_t[]){0x48, 0x83, 0xC4, 0x38,});
+                    // Write 32-bit negative displacement (Little-Endian)
+                    BS_write(code_output, (uint8_t)(disp & 0xFF));
+                    BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+                    BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+                    BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
                 }
-                break;
-            }
-            case LOC_GLOBAL: {
-                emit_mov_eax(code_output, expr, &global_patch_list, target);
 
-                int offset = alloc_tmp_stack_slot(&frame);
-                BS_write_array(code_output, 3, (uint8_t[]){0x89, 0x45, (uint8_t) (-offset)});
-
-                switch (target) {
-                    case F_Elf64:
-                        BS_write_array(code_output, 14, (uint8_t[]){
-                                           0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
-                                           0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00 // mov rdi, 1
-                                       });
-                        BS_write(code_output, 0x48);
-                        BS_write(code_output, 0x8D);
-                        BS_write(code_output, 0x75);
-                        BS_write(code_output, (uint8_t) (-offset)); // lea rsi, [rbp - offset]
-                        BS_write_array(code_output, 9, (uint8_t[]){
-                                           0x48, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, // mov rdx, 1
-                                           0x0F, 0x05 // syscall
-                                       });
-                        break;
-                    case F_Win64:
-                        BS_write_array(code_output, 4, (uint8_t[]){0x48, 0x83, 0xEC, 0x38}); // sub rsp, 0x38
-                        uint8_t get_std_handle[] = {
-                            0x48, 0xC7, 0xC1, 0xF5, 0xFF, 0xFF, 0xFF,
-                            0x48, 0xB8, 0x00, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00, 0x00,
-                            0xFF, 0x10,
-                            0x49, 0x89, 0xC4,
-                        };
-                        BS_write_array(code_output, sizeof(get_std_handle), get_std_handle);
-                        BS_write(code_output, 0x48);
-                        BS_write(code_output, 0x8D);
-                        BS_write(code_output, 0x55);
-                        BS_write(code_output, (uint8_t) (-offset)); // lea rdx, [rbp - offset]
-                        uint8_t write_to_std[] = {
-                            0x48, 0xC7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00,
-                            0x4C, 0x8D, 0x4C, 0x24, 0x28,
-                            0x4C, 0x89, 0xE1,
-                            0x49, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00,
-                            0x48, 0xB8, 0x08, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00, 0x00,
-                            0xFF, 0x10
-                        };
-                        BS_write_array(code_output, sizeof(write_to_std), write_to_std);
-                        BS_write_array(code_output, 4, (uint8_t[]){0x48, 0x83, 0xC4, 0x38}); // add rsp, 0x38
-                        break;
-                }
                 break;
             }
         }
+
+
+        // call <__print_char>
+        const size_t pos = BS_get_cursor(code_output) + 1;
+        uint8_t call[] = {
+            0xe8, 0x00, 0x00, 0x00, 0x00, //          call <>
+        };
+        BS_write_array(code_output, sizeof(call), call);
+        FCPL_register_patch(&function_patch_list, (FunctionCallPatch){
+                               .name = SV_from_string_len("__print_char", 12),
+                               .offset = pos,
+                               .relative = true,
+                               .bit_size = 4,
+            .is_local = true,
+                           });
+
     }
     get_semicolon(view);
 }
 
 #define MAX_ARGS 6
 
-void get_function_call_stmt(StringViewListView* view, const CompilerTarget target) {
-    StringView f_name = SVLV_consume_one(view);
+void get_function_call_stmt(StringViewListView* restrict view, const CompilerTarget target, const StringView* restrict call_kw) {
+    const StringView f_name = SVLV_consume_one(view);
     if (!FR_has_function(&functions_registry, f_name)) {
         srcmap_error(&source_map, f_name.start, "function '%.*s' not found", (int)f_name.len, f_name.start);
         exit(1);
     }
-    Function f = FR_lookup_function(&functions_registry, f_name);
+    const Function f = FR_lookup_function(&functions_registry, f_name);
 
-    StringView lbracket = SVLV_consume_one(view);
+    const StringView lbracket = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&lbracket, "(", 1)) {
         srcmap_error(&source_map, lbracket.start, "expected '(' after function name in function call, got '%.*s'", (int)lbracket.len, lbracket.start);
         exit(1);
@@ -783,20 +868,33 @@ void get_function_call_stmt(StringViewListView* view, const CompilerTarget targe
             srcmap_error(&source_map, f_name.start, "unexpected ')' in function '%.*s' call, expected another %u argument%c", (int)f_name.len, f_name.start, expected_args, expected_args > 1 ? 's' : ' ');
             exit(1);
         }
-        int slot = alloc_stack_slot(&frame); // alloc_tmp_stack_slot
+        const int slot = alloc_stack_slot(&frame); // alloc_tmp_stack_slot
         args_items[f.arg_count - expected_args] = slot;
 
-        Loc last = get_int_expr(view, target, true);
-        // printf("function <%.*s>: arg <%.*s>\n" (int)f_name.len, f_name.start, );
-        // printf("  store i32 %.*s, ptr %%var_%.*s, align 4\n", (int) last.len, last.start, (int) var_name.len, var_name.start);
+        const Loc last = get_int_expr(view, target, true);
 
         // move last into eax
         emit_mov_eax(code_output, last, &global_patch_list, target);
 
         // MOV [rbp - slot], eax
-        BS_write(code_output, 0x89);
-        BS_write(code_output, 0x45);
-        BS_write(code_output, (uint8_t) (-slot));
+        if (slot <= 128) {
+            BS_write(code_output, 0x89);
+            BS_write(code_output, 0x45);
+            BS_write(code_output, (uint8_t) (-slot));
+        } else {
+            // 32-bit displacement path
+            const int32_t disp = -slot;
+
+            BS_write(code_output, 0x89);
+            BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
+
+            // Write 32-bit negative displacement (Little-Endian)
+            BS_write(code_output, (uint8_t)(disp & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+        }
+
         expected_args--;
         if (expected_args > 0) {
             StringView comma = SVLV_consume_one(view);
@@ -813,38 +911,74 @@ void get_function_call_stmt(StringViewListView* view, const CompilerTarget targe
         exit(1);
     }
 
-    // rdi, rsi, rdx, rcx, r8, r9
+    // // edi, esi, edx, ecx, r8d, r9d
+    // static const uint8_t arg_regs_modrm[] = {0x7D, 0x75, 0x55, 0x4D, 0x00, 0x00};
+    // // No REX prefix for edi/esi/edx/ecx; REX.R (0x44) needed for r8d/r9d
+    // static const uint8_t arg_regs_r8d_modrm[] = {0x45, 0x4D};
+    //
+    // for (int i = 0; i < f.arg_count; i++) {
+    //     const int slot = args_items[i];
+    //     if (i < 4) {
+    //         // MOV edi/esi/edx/ecx, [rbp - slot]
+    //         // 8B ModRM disp8  (no REX prefix)
+    //         BS_write(code_output, 0x8B);
+    //         BS_write(code_output, arg_regs_modrm[i]);
+    //         BS_write(code_output, (uint8_t)(-slot));
+    //     } else {
+    //         // MOV r8d/r9d, [rbp - slot]
+    //         // 44 8B ModRM disp8  (REX.R without REX.W)
+    //         BS_write(code_output, 0x44);
+    //         BS_write(code_output, 0x8B);
+    //         BS_write(code_output, arg_regs_r8d_modrm[i - 4]);
+    //         BS_write(code_output, (uint8_t)(-slot));
+    //     }
+    // }
+    // edi, esi, edx, ecx, r8d, r9d
     static const uint8_t arg_regs_modrm[] = {0x7D, 0x75, 0x55, 0x4D, 0x00, 0x00};
-    // REX.W prefix needed for r8/r9 (extended registers)
-    static const uint8_t arg_regs_rex[] = {0x48, 0x48, 0x48, 0x48, 0x4C, 0x4C};
-    // opcode: MOV reg, [rbp - disp8]  ->  8B /r
-    // for r8/r9 the ModR/M is 0x45/0x4D with REX.R set (via 0x4C)
-    static const uint8_t arg_regs_r8_modrm[] = {0x45, 0x4D};
+    // No REX prefix for edi/esi/edx/ecx; REX.R (0x44) needed for r8d/r9d
+    static const uint8_t arg_regs_r8d_modrm[] = {0x45, 0x4D};
 
     for (int i = 0; i < f.arg_count; i++) {
-        int slot = args_items[i];
+        const int slot = args_items[i];
+
         if (i < 4) {
-            // MOV rdi/rsi/rdx/rcx, [rbp - slot]
-            // 48 8B ModRM disp8
-            BS_write(code_output, arg_regs_rex[i]);
+            // MOV edi/esi/edx/ecx, [rbp - slot]
             BS_write(code_output, 0x8B);
-            BS_write(code_output, arg_regs_modrm[i]);
-            BS_write(code_output, (uint8_t) (-slot));
+
+            if (slot <= 128) {
+                BS_write(code_output, arg_regs_modrm[i]);
+                BS_write(code_output, (uint8_t)(-slot));
+            } else {
+                const int32_t disp = -slot;
+                BS_write(code_output, arg_regs_modrm[i] + 0x40); // Convert disp8 ModRM to disp32
+                BS_write(code_output, (uint8_t)(disp & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+            }
         } else {
-            // MOV r8/r9, [rbp - slot]
-            // 4C 8B ModRM disp8
-            BS_write(code_output, 0x4C);
+            // MOV r8d/r9d, [rbp - slot]
+            BS_write(code_output, 0x44); // REX.R prefix
             BS_write(code_output, 0x8B);
-            BS_write(code_output, arg_regs_r8_modrm[i - 4]);
-            BS_write(code_output, (uint8_t) (-slot));
+
+            if (slot <= 128) {
+                BS_write(code_output, arg_regs_r8d_modrm[i - 4]);
+                BS_write(code_output, (uint8_t)(-slot));
+            } else {
+                int32_t disp = -slot;
+                BS_write(code_output, arg_regs_r8d_modrm[i - 4] + 0x40); // Convert disp8 ModRM to disp32
+                BS_write(code_output, (uint8_t)(disp & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+            }
         }
-        // free_tmp_stack_slot(&frame, slot);
     }
 
     free(args_items);
 
 
-    size_t pos = BS_get_cursor(code_output) + 1;
+    const size_t pos = BS_get_cursor(code_output) + 1;
     uint8_t call[] = {
         0xe8, 0x00, 0x00, 0x00, 0x00, //          call <>
     };
@@ -859,18 +993,37 @@ void get_function_call_stmt(StringViewListView* view, const CompilerTarget targe
 
 
     if (f.returns_value) {
-        StringView semi_or_into = SVLV_inspect_back(view);
+        const StringView semi_or_into = SVLV_inspect_back(view);
         if (SV_pv_cmp_eq(&semi_or_into, ";", 1)) {
             get_semicolon(view);
-            printf("[warning] discarding return value of function <%.*s>\n", (int) f.name.len, f.name.start);
+            srcmap_warn(&source_map, call_kw->start, "discarding return value of function");
         } else if (SV_pv_cmp_eq(&semi_or_into, "into", 4)) {
             SVLV_consume_one(view); // into
-            StringView into_var = SVLV_consume_one(view);
-            int slot = lookup_var(into_var);
+            const StringView into_var = SVLV_consume_one(view);
+
+            VarEntry* var = get_var(into_var);
+            materialize_const_var(var, false);
+
+            const int slot = lookup_var(into_var);
+
             // MOV [rbp - slot], eax
-            BS_write(code_output, 0x89);
-            BS_write(code_output, 0x45);
-            BS_write(code_output, (uint8_t) (-slot));
+            if (slot <= 128) {
+                BS_write(code_output, 0x89);
+                BS_write(code_output, 0x45);
+                BS_write(code_output, (uint8_t) (-slot));
+            } else {
+                // 32-bit displacement path
+                const int32_t disp = -slot;
+
+                BS_write(code_output, 0x89);
+                BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
+
+                // Write 32-bit negative displacement (Little-Endian)
+                BS_write(code_output, (uint8_t)(disp & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+            }
 
             get_semicolon(view);
         } else {
@@ -883,7 +1036,7 @@ void get_function_call_stmt(StringViewListView* view, const CompilerTarget targe
 }
 
 void get_stmt(StringViewListView* view, const bool should_return_value, const CompilerTarget target) {
-    StringView s1 = SVLV_consume_one(view);
+    const StringView s1 = SVLV_consume_one(view);
     if (SV_pv_cmp_eq(&s1, "int", 3)) {
         get_int_var_dec(view, target);
     } else if (SV_pv_cmp_eq(&s1, "set", 3)) {
@@ -891,25 +1044,28 @@ void get_stmt(StringViewListView* view, const bool should_return_value, const Co
     } else if (SV_pv_cmp_eq(&s1, "if", 2)) {
         get_if_conditional(view, should_return_value, target);
     } else if (SV_pv_cmp_eq(&s1, "while", 5)) {
+        materialize_const_variables();
         get_while_conditional(view, should_return_value, target);
     } else if (SV_pv_cmp_eq(&s1, "print", 5)) {
         get_print_stmt(view, target);
     } else if (SV_pv_cmp_eq(&s1, "call", 4)) {
-        get_function_call_stmt(view, target);
+        get_function_call_stmt(view, target, &s1);
     } else {
-        printf("STMT: unknown\n");
+        srcmap_error(&source_map, s1.start, "unknown start of statement");
+        // printf("STMT: unknown\n");
+        exit(1);
     }
 }
 
 void get_function(StringViewListView* view, const CompilerTarget target) {
-    size_t f_start_cursor = BS_get_cursor(code_output);
+    const size_t f_start_cursor = BS_get_cursor(code_output);
 
     create_frame();
 
     function_end_id = label_cnt++;
 
 
-    StringView ret_type = SVLV_consume_one(view);
+    const StringView ret_type = SVLV_consume_one(view);
     bool returns_value = false;
     if (SV_pv_cmp_eq(&ret_type, "int", 3)) {
         returns_value = true;
@@ -919,9 +1075,9 @@ void get_function(StringViewListView* view, const CompilerTarget target) {
         exit(1);
     }
 
-    StringView f_name = SVLV_consume_one(view);
+    const StringView f_name = SVLV_consume_one(view);
 
-    StringView f_args_start = SVLV_consume_one(view);
+    const StringView f_args_start = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&f_args_start, "(", 1)) {
         srcmap_error(&source_map, f_args_start.start, "expected '(', got '%.*s'", (int)f_args_start.len, f_args_start.start);
         exit(1);
@@ -960,25 +1116,47 @@ void get_function(StringViewListView* view, const CompilerTarget target) {
     uint8_t prologue[] = {
         0x55, // push rbp
         0x48, 0x89, 0xE5, // mov rbp, rsp
-        0x48, 0x83, 0xEC, 0xFF // sub rsp, N
+        // 0x48, 0x83, 0xEC, 0xFF // sub rsp, N
+        0x48, 0x81, 0xEC, 0x00, 0x00, 0x00, 0x00, // sub rsp, N
     };
-    BS_write_array(code_output, 8, prologue);
-    size_t prologue_frame_override_pos = BS_get_cursor(code_output) - 1;
+    BS_write_array(code_output, sizeof(prologue), prologue);
+    const size_t prologue_frame_override_pos = BS_get_cursor(code_output) - 4;
 
 
-    // static const uint8_t param_store_rex[]   = { 0x48, 0x48, 0x48, 0x48, 0x4C, 0x4C };
     static const uint8_t param_store_modrm[] = {0x7D, 0x75, 0x55, 0x4D, 0x45, 0x4D}; // rdi,rsi,rdx,rcx,r8,r9
 
     for (size_t i = 0; i < f_args.len; i++) {
-        int slot = declare_var(f_args.array[i]); // same as local var
-        // printf("in function <%.*s>, param '%.*s'\n", (int)f_name.len, f_name.start, (int)f_args.array[i].len, f_args.array[i].start);
+        const int slot = declare_var(f_args.array[i], VM_RUNTIME, 0); // same as local var
 
         // MOV [rbp - slot], rdi/rsi/...
+
+        // REX prefix for r8, r9
+        if (i == 4 || i == 5) {
+            BS_write(code_output, 0x44);
+        }
         BS_write(code_output, 0x89);
-        BS_write(code_output, param_store_modrm[i]);
-        BS_write(code_output, (uint8_t) (-slot));
+
+        // BS_write(code_output, param_store_modrm[i]);
+        // BS_write(code_output, (uint8_t) (-slot));
+        if (slot <= 128) {
+            // 8-bit displacement path
+            BS_write(code_output, param_store_modrm[i]);
+            BS_write(code_output, (uint8_t)(-slot));
+        } else { // should be unnesesary, but just in case
+            // 32-bit displacement path
+            const int32_t disp = -slot;
+
+            BS_write(code_output, param_store_modrm[i] + 0x40); // Convert disp8 ModRM to disp32
+
+            // Write 32-bit negative displacement (Little-Endian)
+            BS_write(code_output, (uint8_t)(disp & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+        }
     }
 
+    const uint8_t args_count = f_args.len;
 
     SVL_p_free(&f_args);
 
@@ -995,28 +1173,38 @@ void get_function(StringViewListView* view, const CompilerTarget target) {
     // define fn_end_<id>
     LL_push(&labels, (Label){.offset = BS_get_cursor(code_output), .id = function_end_id, .kind = REL_END});
 
-    size_t cursor_snap = BS_get_cursor(code_output);
+    const size_t cursor_snap = BS_get_cursor(code_output);
     BS_set_cursor(code_output, prologue_frame_override_pos);
-    BS_write(code_output, (uint8_t) ((get_stack_frame_max(get_frame()) + 15) & ~15));
+    // BS_write(code_output, (uint8_t) ((get_stack_frame_max(get_frame()) + 15) & ~15));
+    const uint32_t off_val = (get_stack_frame_max(get_frame()) + 15) & ~15;
+    BS_write(code_output, (off_val >>  0) & 0xFF);
+    BS_write(code_output, (off_val >>  8) & 0xFF);
+    BS_write(code_output, (off_val >> 16) & 0xFF);
+    BS_write(code_output, (off_val >> 24) & 0xFF);
     BS_set_cursor(code_output, cursor_snap);
 
 
     // function_end_id
 
+    uint8_t epilogue_add[] = { 0x48, 0x81, 0xC4 };
+    BS_write_array(code_output, sizeof(epilogue_add), epilogue_add);
+    BS_write(code_output, (off_val >>  0) & 0xFF);
+    BS_write(code_output, (off_val >>  8) & 0xFF);
+    BS_write(code_output, (off_val >> 16) & 0xFF);
+    BS_write(code_output, (off_val >> 24) & 0xFF);
     uint8_t epilogue[] = {
-        0x48, 0x83, 0xC4, (uint8_t) ((get_stack_frame_max(get_frame()) + 15) & ~15), // add rsp, N
+        // 0x48, 0x83, 0xC4, (uint8_t) ((get_stack_frame_max(get_frame()) + 15) & ~15), // add rsp, N
         0x5D, // pop rbp
         0xC3, // ret
     };
-    BS_write_array(code_output, 6, epilogue);
+    BS_write_array(code_output, sizeof(epilogue), epilogue);
 
-    size_t f_end_cursor = BS_get_cursor(code_output);
+    const size_t f_end_cursor = BS_get_cursor(code_output);
 
-    // printf("f_start_cursor = %lu\n", f_start_cursor);
 
     FR_overwrite_function(&functions_registry, (Function){
                               .name = f_name,
-                              .arg_count = f_args.len,
+                              .arg_count = args_count,
                               .offset = f_start_cursor,
                               .code_size = f_end_cursor - f_start_cursor,
                               .returns_value = returns_value
@@ -1055,20 +1243,20 @@ void resolve_frame(void) {
 bool is_include_next(StringViewListView* list) {
     if (SVLV_is_empty(list)) return false;
 
-    StringView sv = SVLV_inspect_back(list);
+    const StringView sv = SVLV_inspect_back(list);
     if (SV_pv_cmp_eq(&sv, "include", 7)) return true;
     return false;
 }
 
-bool is_quoted_string(StringView* sv) {
+bool is_quoted_string(const StringView* sv) {
     return sv->len >= 2 && sv->start[0] == '"' && sv->start[sv->len - 1] == '"';
 }
 
-void compile(StringViewListView*, const StringView* current_source_file, CompilerTarget, StringView original_text); // , StringView filename
+void compile(StringViewListView*, const StringView* current_source_file, CompilerTarget, StringView original_text);
 
 void resolve_import(StringViewListView* list, const StringView* current_source_file, const CompilerTarget target) {
     SVLV_consume_one(list); // include KW
-    StringView path = SVLV_consume_one(list);
+    const StringView path = SVLV_consume_one(list);
     if (!is_quoted_string(&path)) {
         srcmap_error(&source_map, path.start, "include excepted quoted string");
         exit(1);
@@ -1076,18 +1264,20 @@ void resolve_import(StringViewListView* list, const StringView* current_source_f
 
     get_semicolon(list);
 
+    // parsing import stmt finished at this point, source_map is later overwritten by compile call
+
     StringView path2 = path;
     path2.start++;
     path2.len -= 2;
 
-    const char* path_c = SV_to__c_string(&path2);
-    const char* source_path_c = SV_to__c_string(current_source_file);
+    const char* path_c = SV_to_c_string(&path2);
+    const char* source_path_c = SV_to_c_string(current_source_file);
 
     char resolved_path_raw[PATH_MAX];
 
     resolve_import_path(source_path_c, path_c, resolved_path_raw);
 
-    StringView resolved_path = SV_from_string(resolved_path_raw);
+    const StringView resolved_path = SV_from_string(resolved_path_raw);
 
     for (size_t n = 0; n < import_table.len; n++) {
         if (SV_pp_cmp_eq(&import_table.array[n], &resolved_path)) {
@@ -1099,7 +1289,7 @@ void resolve_import(StringViewListView* list, const StringView* current_source_f
 
     size_t file_size;
     char* content_raw = read_file(resolved_path_raw, &file_size);
-    StringView content = SV_from_string_len(content_raw, file_size);
+    const StringView content = SV_from_string_len(content_raw, file_size);
 
     StringViewList svl = p_tokenize(&content);
     StringViewListView svlv = SVLV_from_SVL(&svl);
@@ -1123,7 +1313,7 @@ void resolve_import(StringViewListView* list, const StringView* current_source_f
 bool is_global_next(StringViewListView* list) {
     if (SVLV_is_empty(list)) return false;
 
-    StringView sv = SVLV_inspect_back(list);
+    const StringView sv = SVLV_inspect_back(list);
     if (SV_pv_cmp_eq(&sv, "global", 6)) return true;
     return false;
 }
@@ -1152,14 +1342,14 @@ void get_global_var(StringViewListView* view, const CompilerTarget target) {
         exit(1);
     }
     // printf("in GLOBAL: var_table_length = %lu\n", var_table_length);
-    Loc last = get_int_expr(view, target, false); // this generates instructions
+    const Loc last = get_int_expr(view, target, false); // this generates instructions
 
     // move last into eax
     emit_mov_eax(code_output, last, &global_patch_list_initializer, target);
 
     switch (target) {
         case F_Elf64: {
-            size_t pos = BS_get_cursor(code_output) + 3;
+            const size_t pos = BS_get_cursor(code_output) + 3;
             uint8_t store[] = {
                 0x89, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00, // mov [addr32], eax
             };
@@ -1247,20 +1437,24 @@ void compile(StringViewListView* list, const StringView* current_source_file, co
 
 void process_elf64(const StringView* input, const StringView* current_source_file, const char* output_filepath);
 
-void process_win64(const StringView* input, StringView* current_source_file, const char* output_filepath);
+void process_win64(const StringView* input, const StringView* current_source_file, const char* output_filepath);
 
-void process(const StringView* restrict input, StringView* restrict current_source_file, const char* restrict output_filepath, const CompilerTarget target) {
+void process(const StringView* restrict input, const StringView* restrict current_source_file, const char* restrict output_filepath, const CompilerTarget target) {
     code_output_funcs = BS_new();
     code_output_globals = BS_new();
     code_output = &code_output_funcs;
     assert(code_output_funcs.array != NULL);
     assert(code_output_globals.array != NULL);
 
+    bss_alloc_next = 0;
+    label_cnt = 0;
+
     globals_registry = GR_new();
     global_patch_list = GPL_new();
     global_patch_list_initializer = GPL_new();
 
     content_ptrs = malloc(sizeof(char *) * content_ptrs_cap);
+    content_ptrs_len = 0;
 
     switch (target) {
         case F_Elf64:
@@ -1332,11 +1526,11 @@ void process_elf64(const StringView* restrict input, const StringView* restrict 
         .is_local = true,
                        });
 
-    StringView runtime_error_str = SV_from_string_len("runtime error: ", 15);
-    size_t runtime_error_str_index = add_str_const(runtime_error_str);
+    const StringView runtime_error_str = SV_from_string_len("runtime error: ", 15);
+    const size_t runtime_error_str_index = add_str_const(runtime_error_str);
 
-    StringView runtime_error__div_zero_str = SV_from_string_len("division by zero\n", 17);
-    size_t runtime_error__div_zero_str_index = add_str_const(runtime_error__div_zero_str);
+    const StringView runtime_error__div_zero_str = SV_from_string_len("division by zero\n", 17);
+    const size_t runtime_error__div_zero_str_index = add_str_const(runtime_error__div_zero_str);
 
     uint8_t rt_zero_div_handler[] = {
         0x48, 0xc7, 0xc0, 0x01, 0x00, 0x00, 0x00, // mov    rax,0x1
@@ -1358,34 +1552,64 @@ void process_elf64(const StringView* restrict input, const StringView* restrict 
     BS_write_array(code_output, sizeof(rt_zero_div_handler), rt_zero_div_handler);
     SCARL_push(&string_consts_relocations, (StringConstAddrRelocation){
                    .const_index = runtime_error_str_index,
-                   .patch_offset = sizeof(entry_point) + 7 + 7 + 3,
+                   .patch_offset = sizeof(entry_point) + 7 + 7 + 3, // offset for string in .rodata
                    .bit_size = 4,
                });
     SCARL_push(&string_consts_relocations, (StringConstAddrRelocation){
                    .const_index = runtime_error__div_zero_str_index,
-                   .patch_offset = sizeof(entry_point) + 7 + 7 + 7 + 7 + 2 + 7 + 7 + 3,
+                   .patch_offset = sizeof(entry_point) + 7 + 7 + 7 + 7 + 2 + 7 + 7 + 3, // offset for string in .rodata
                    .bit_size = 4,
                });
+
+
+    // __print_char
+    // expects addr of char in RAX
+    uint8_t print_char_util[] = {
+        0x48, 0x89, 0xC6, // mov rsi, rax
+        0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1  (sys_write)
+        0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00, // mov rdi, 1  (stdout)
+        0x48, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, // mov rdx, 1  (len)
+        0x0F, 0x05, // syscall
+        0xC3, // ret
+    };
+    BS_write_array(code_output, sizeof(print_char_util), print_char_util);
+
+
+
 
     // emit stack preparation for _global frame
     uint8_t globals_prologue[] = {
         0x55, // push rbp
         0x48, 0x89, 0xE5, // mov rbp, rsp
-        0x48, 0x83, 0xEC, 0xFF // sub rsp, N
+        // 0x48, 0x83, 0xEC, 0xFF // sub rsp, N
+        0x48, 0x81, 0xEC, 0x00, 0x00, 0x00, 0x00, // sub rsp, N
     };
-    BS_write_array(&code_output_globals, 8, globals_prologue);
-    size_t globals_frame_override_pos = BS_get_cursor(&code_output_globals) - 1;
+    BS_write_array(&code_output_globals, sizeof(globals_prologue), globals_prologue);
+    const size_t globals_frame_override_pos = BS_get_cursor(&code_output_globals) - 4;
 
 
     compile(&svlv, current_source_file, F_Elf64, *input);
 
-    size_t globals_init_cursor_snap = BS_get_cursor(&code_output_globals);
+    const size_t globals_init_cursor_snap = BS_get_cursor(&code_output_globals);
     BS_set_cursor(&code_output_globals, globals_frame_override_pos);
-    BS_write(&code_output_globals, (uint8_t) ((global_frame.next_offset + 15) & ~15));
+    // BS_write(&code_output_globals, (uint8_t) ((global_frame.next_offset + 15) & ~15));
+    const uint32_t off_val = (get_stack_frame_max(get_frame()) + 15) & ~15;
+    BS_write(&code_output_globals, (off_val >>  0) & 0xFF);
+    BS_write(&code_output_globals, (off_val >>  8) & 0xFF);
+    BS_write(&code_output_globals, (off_val >> 16) & 0xFF);
+    BS_write(&code_output_globals, (off_val >> 24) & 0xFF);
+
     BS_set_cursor(&code_output_globals, globals_init_cursor_snap);
 
+
+    uint8_t globals_epilogue_add[] = { 0x48, 0x81, 0xC4 };
+    BS_write_array(&code_output_globals, sizeof(globals_epilogue_add), globals_epilogue_add);
+    BS_write(&code_output_globals, (off_val >>  0) & 0xFF);
+    BS_write(&code_output_globals, (off_val >>  8) & 0xFF);
+    BS_write(&code_output_globals, (off_val >> 16) & 0xFF);
+    BS_write(&code_output_globals, (off_val >> 24) & 0xFF);
     uint8_t globals_epilogue[] = {
-        0x48, 0x83, 0xC4, (uint8_t) ((global_frame.next_offset + 15) & ~15), // add rsp, N
+        // 0x48, 0x83, 0xC4, (uint8_t) ((global_frame.next_offset + 15) & ~15), // add rsp, N
         0x5D, // pop rbp
         0xC3, // ret
     };
@@ -1423,6 +1647,14 @@ void process_elf64(const StringView* restrict input, const StringView* restrict 
                              .name = SV_from_string_len("__rt_exception__zero_div", 24),
                              .offset = sizeof(entry_point),
                              .code_size = sizeof(rt_zero_div_handler),
+                             .returns_value = false,
+                             .arg_count = 0,
+                         });
+
+    FR_register_function(&functions_registry, (Function){
+                             .name = SV_from_string_len("__print_char", 12),
+                             .offset = sizeof(entry_point) + sizeof(rt_zero_div_handler),
+                             .code_size = sizeof(print_char_util),
                              .returns_value = false,
                              .arg_count = 0,
                          });
@@ -1468,7 +1700,7 @@ void process_elf64(const StringView* restrict input, const StringView* restrict 
 }
 
 
-void process_win64(const StringView* input, StringView* current_source_file, const char* output_filepath) {
+void process_win64(const StringView* restrict input, const StringView* restrict current_source_file, const char* restrict output_filepath) {
     functions_registry = FR_new();
     function_patch_list = FCPL_new();
 
@@ -1602,6 +1834,40 @@ void process_win64(const StringView* input, StringView* current_source_file, con
                });
 
 
+
+    // __print_char
+    // expects addr of char in RAX
+    uint8_t print_char_util[] = {
+        0x55,                   // push    rbp
+        0x48, 0x89, 0xE5,       // mov     rbp, rsp
+        0x48, 0x83, 0xEC, 0x48, // sub     rsp, 0x48
+
+
+        0x49, 0x89, 0xC5, // mov r13, rax
+
+        // GetStdHandle()
+        0x48, 0xC7, 0xC1, 0xF5, 0xFF, 0xFF, 0xFF,                   // mov    rcx,0xfffffffffffffff5
+        0x48, 0xB8, 0x00, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00, 0x00, // movabs rax,0x140001000
+        0xFF, 0x10,                                                 // call   QWORD PTR [rax]
+        0x49, 0x89, 0xC4,                                           // mov    r12, rax
+
+
+        // WriteFile()
+        0x48, 0xC7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00,       // mov    QWORD PTR [rsp+0x20],0x0
+        0x4C, 0x8D, 0x4C, 0x24, 0x28,                               // lea    r9,[rsp+0x28]
+        0x4c, 0x89, 0xe1,                                           // mov    rcx,r12 ; restore std hadle
+        0x49, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00,                   // mov    r8,0x1
+        0x48, 0xB8, 0x08, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00, 0x00, // movabs rax,0x140001008
+        0x4C, 0x89, 0xEA,                                           // mov rdx, r13 ; restore char ptr
+        0xFF, 0x10,                                                 // call   QWORD PTR [rax]
+
+        0x48, 0x83, 0xC4, 0x48, // add rsp, 0x48
+        0x5D, // pop  rbp
+        0xC3, // ret
+    };
+    BS_write_array(code_output, sizeof(print_char_util), print_char_util);
+
+
     // emit stack preparation for _global frame
     uint8_t globals_prologue[] = {
         0x55, // push rbp
@@ -1636,13 +1902,13 @@ void process_win64(const StringView* input, StringView* current_source_file, con
         fprintf(stderr, "[ERROR] no main function found in the program\n");
         exit(1);
     }
-    Function main_fn = FR_lookup_function(&functions_registry, SV_from_string_len("main", 4));
+    const Function main_fn = FR_lookup_function(&functions_registry, SV_from_string_len("main", 4));
     if (main_fn.arg_count != 0) {
         fprintf(stderr, "[ERROR] main function should have not arguments, but %i were provided\n", main_fn.arg_count);
         exit(1);
     }
     if (main_fn.returns_value == false) {
-        fprintf(stderr, "[ERROR] main function should return int, but specified in the program as 'void'\n");
+        fprintf(stderr, "[ERROR] main function should return int, but declared in the program as 'void'\n");
         exit(1);
     }
 
@@ -1652,7 +1918,15 @@ void process_win64(const StringView* input, StringView* current_source_file, con
     FR_register_function(&functions_registry, (Function){
                              .name = SV_from_string_len("__rt_exception__zero_div", 24),
                              .offset = sizeof(entry_point),
-                             .code_size = 0, // sizeof(rt_zero_div_handler),
+                             .code_size = sizeof(rt_zero_div_handler), // 0
+                             .returns_value = false,
+                             .arg_count = 0,
+                         });
+
+    FR_register_function(&functions_registry, (Function){
+                             .name = SV_from_string_len("__print_char", 12),
+                             .offset = sizeof(entry_point) + sizeof(rt_zero_div_handler),
+                             .code_size = sizeof(print_char_util),
                              .returns_value = false,
                              .arg_count = 0,
                          });
@@ -1690,7 +1964,6 @@ void process_win64(const StringView* input, StringView* current_source_file, con
                 number_of_section, importing_funcs, bss_alloc_next, bss_init_code_len);
 
 
-    // free(data);
     FR_free(&functions_registry);
     FR_free(&new_fr);
     FCPL_free(&function_patch_list);

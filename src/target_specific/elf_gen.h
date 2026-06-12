@@ -6,7 +6,7 @@
 #define SIMPLECOMPILERINC_2_ELF_GEN_H
 #include <stdint.h>
 #include <stddef.h>
-#include "../emit.h"
+#include "../codegen.h"
 
 void write_elf64(
     const char *path,

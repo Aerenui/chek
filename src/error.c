@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+
 SourceLocation srcmap_locate(const SourceMap* sm, const char* pos) {
     size_t line = 1;
     size_t col = 1;
@@ -31,18 +32,34 @@ SourceLocation srcmap_locate(const SourceMap* sm, const char* pos) {
     };
 }
 
-
-void srcmap_error(const SourceMap* restrict sm, const char* restrict pos, const char *restrict format, ...) {
+void srcmap_intern_v(const char* restrict e_type, const SourceMap* restrict sm, const char* restrict pos, const char *restrict format, va_list args) {
+// void srcmap_intern(const char* restrict e_type, const SourceMap* restrict sm, const char* restrict pos, const char *restrict format, ...) {
     const SourceLocation loc = srcmap_locate(sm, pos);
 
-    fprintf(stderr, "%.*s:%zu:%zu: error: ", (int)sm->filename.len, sm->filename.start, loc.line, loc.col);
+    fprintf(stderr, "%.*s:%zu:%zu: %s: ", (int)sm->filename.len, sm->filename.start, loc.line, loc.col, e_type);
 
-    va_list ap;
-    va_start(ap, format);
-    vfprintf(stderr, format, ap);
-    va_end(ap);
+    // va_list ap;
+    // va_start(ap, format);
+    vfprintf(stderr, format, args);
+    // va_end(ap);
+    // va_list ap = args;
 
     fprintf(stderr, "\n");
     fprintf(stderr, "  %.*s\n", (int)loc.line_len, loc.line_start);
     fprintf(stderr, "  %*s^\n", (int)(loc.col - 1), "");
+}
+
+
+void srcmap_warn(const SourceMap* restrict sm, const char* restrict pos, const char *restrict format, ...) {
+    va_list args;
+    va_start(args, format);
+    srcmap_intern_v(ANSI_COLOR_YELLOW "warn" ANSI_COLOR_RESET, sm, pos, format, args);
+    va_end(args);
+}
+
+void srcmap_error(const SourceMap* restrict sm, const char* restrict pos, const char *restrict format, ...) {
+    va_list args;
+    va_start(args, format);
+    srcmap_intern_v( ANSI_COLOR_RED "error" ANSI_COLOR_RESET, sm, pos, format, args);
+    va_end(args);
 }

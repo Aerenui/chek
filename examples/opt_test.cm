@@ -1,0 +1,21 @@
+
+
+
+void while_opt()
+    while 1-1 do
+        print 64;
+    end
+    print 96;
+    print 10;
+end
+
+# b should not even appear in optimized version
+void arithmetic_opt(a)
+    int b: a * (10 - 5 - 3 - 2);
+end
+
+
+int main()
+    call while_opt();
+    return 0;
+end

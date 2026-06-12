@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
+
 
 
 char* read_file(const char*, size_t*);
@@ -25,9 +25,9 @@ void SV_p_printf(const StringView*);
 
 bool SV_pp_cmp_eq(const StringView*, const StringView*);
 bool SV_pv_cmp_eq(const StringView*, const char*, size_t);
+bool SV_pv_starts_with(const StringView* restrict, const char* restrict, size_t len);
 
-
-const char* SV_to__c_string(const StringView*);
+const char* SV_to_c_string(const StringView*);
 
 
 // ---------------------------------------------------
