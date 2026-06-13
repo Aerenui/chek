@@ -207,7 +207,8 @@ int declare_var(const StringView name, const VarMaterialization vm, const int vm
 }
 
 
-void materialize_const_var(VarEntry* var, bool include_value) {
+void materialize_const_var(VarEntry* var, const bool include_value) {
+    if (var->vm != VM_CONST) return;
     const int slot = alloc_stack_slot(&frame);
 
     if (include_value) {
@@ -553,7 +554,14 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
 
         if (cond_true) {
             // compile then-block normally
+            // get_stmt_block(view, should_return_value, target);
+            // const int frame_next_offset_snapshot = get_frame()->next_offset;
+            const size_t var_table_length_snapshot = var_table_length;
+
             get_stmt_block(view, should_return_value, target);
+
+            // get_frame()->next_offset = frame_next_offset_snapshot;
+            var_table_length = var_table_length_snapshot;
 
             // skip else-block if present (consume tokens without emitting)
             const StringView else_keyword = SVLV_inspect_back(view);
@@ -568,7 +576,14 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
             const StringView else_keyword = SVLV_inspect_back(view);
             if (SV_pv_cmp_eq(&else_keyword, "else", 4)) {
                 SVLV_consume_one(view);
-                get_stmt_block(view, should_return_value, target); // compile else normally
+                // get_stmt_block(view, should_return_value, target); // compile else normally
+                // const int frame_next_offset_snapshot = get_frame()->next_offset;
+                const size_t var_table_length_snapshot = var_table_length;
+
+                get_stmt_block(view, should_return_value, target);
+
+                // get_frame()->next_offset = frame_next_offset_snapshot;
+                var_table_length = var_table_length_snapshot;
             }
             // no else: nothing emitted at all
         }
@@ -602,12 +617,12 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
                 .kind = REL_ELSE,
             });
 
-    int frame_next_offset_snapshot = get_frame()->next_offset;
+    // int frame_next_offset_snapshot = get_frame()->next_offset;
     size_t var_table_length_snapshot = var_table_length;
 
     get_stmt_block(view, should_return_value, target);
 
-    get_frame()->next_offset = frame_next_offset_snapshot;
+    // get_frame()->next_offset = frame_next_offset_snapshot;
     var_table_length = var_table_length_snapshot;
 
     const StringView else_keyword = SVLV_inspect_back(view);
@@ -631,12 +646,12 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
         LL_push(&labels, (Label){.offset = BS_get_cursor(code_output), .id = id, .kind = REL_ELSE});
 
 
-        frame_next_offset_snapshot = get_frame()->next_offset;
+        // frame_next_offset_snapshot = get_frame()->next_offset;
         var_table_length_snapshot = var_table_length;
 
         get_stmt_block(view, should_return_value, target);
 
-        get_frame()->next_offset = frame_next_offset_snapshot;
+        // get_frame()->next_offset = frame_next_offset_snapshot;
         var_table_length = var_table_length_snapshot;
     } else {
         // no else — JE jumps directly to end, define else_<id> here as same as end
@@ -700,12 +715,12 @@ void get_while_conditional(StringViewListView* view, const bool should_return_va
             });
 
     // body
-    const int frame_next_offset_snapshot = get_frame()->next_offset;
+    // const int frame_next_offset_snapshot = get_frame()->next_offset;
     const size_t var_table_length_snapshot = var_table_length;
 
     get_stmt_block(view, should_return_value, target);
 
-    get_frame()->next_offset = frame_next_offset_snapshot;
+    // get_frame()->next_offset = frame_next_offset_snapshot;
     var_table_length = var_table_length_snapshot;
 
     // JMP loop_<id> (placeholder)
@@ -738,96 +753,131 @@ void get_print_stmt(StringViewListView* view, const CompilerTarget target) {
         if (inspect.start[0] == ';') {
             break;
         }
-        const Loc expr = get_int_expr(view, target, true);
 
-        // puts address of char into RAX and calls __print_char
-        switch (expr.kind) {
-            case LOC_IMMEDIATE:
-            case LOC_STACK_SLOT:
-            case LOC_GLOBAL: {
-                emit_mov_eax(code_output, expr, &global_patch_list, target);
-                const int slot = alloc_tmp_stack_slot(&frame);
-                // mov [rbp - offset], eax
-                if (slot <= 128) {
-                    BS_write(code_output, 0x89);
-                    BS_write(code_output, 0x45);
-                    BS_write(code_output, (uint8_t) (-slot));
-                } else {
-                    // 32-bit displacement path
-                    const int32_t disp = -slot;
+        if (inspect.start[0] == '"') {
+            StringView str = SVLV_consume_one(view);
+            str.start++;
+            str.len-=2;
+            // printf("print stmt: to print string: "SV_format"\n", SV_v_args(inspect));
 
-                    BS_write(code_output, 0x89);
-                    BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
+            // movabs rax, addr
+            BS_write(code_output, 0x48);
+            BS_write(code_output, 0xB8);
+            const size_t addr_cursor = BS_get_cursor(code_output);
+            uint8_t pad[8] = {0};
+            BS_write_array(code_output, sizeof(pad), pad);
 
-                    // Write 32-bit negative displacement (Little-Endian)
-                    BS_write(code_output, (uint8_t)(disp & 0xFF));
-                    BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-                    BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-                    BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+            const size_t str_index = add_str_const(str);
+            SCARL_push(&string_consts_relocations, (StringConstAddrRelocation){
+                   .const_index = str_index,
+                   .patch_offset = addr_cursor, // offset for string in .rodata
+                   .bit_size = 8,
+               });
+
+            // mov ebx, LEN
+            BS_write(code_output, 0xBB);
+            const uint32_t str_len = (uint32_t)str.len;
+            BS_write(code_output, (str_len >> 0) & 0xFF);
+            BS_write(code_output, (str_len >> 8) & 0xFF);
+            BS_write(code_output, (str_len >> 16) & 0xFF);
+            BS_write(code_output, (str_len >> 24) & 0xFF);
+        } else {
+            const Loc expr = get_int_expr(view, target, true);
+
+            // puts address of char into RAX and calls __print
+            switch (expr.kind) {
+                case LOC_IMMEDIATE:
+                case LOC_STACK_SLOT:
+                case LOC_GLOBAL: {
+                    emit_mov_eax(code_output, expr, &global_patch_list, target);
+                    const int slot = alloc_tmp_stack_slot(&frame);
+                    // mov [rbp - offset], eax
+                    if (slot <= 128) {
+                        BS_write(code_output, 0x89);
+                        BS_write(code_output, 0x45);
+                        BS_write(code_output, (uint8_t) (-slot));
+                    } else {
+                        // 32-bit displacement path
+                        const int32_t disp = -slot;
+
+                        BS_write(code_output, 0x89);
+                        BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
+
+                        // Write 32-bit negative displacement (Little-Endian)
+                        BS_write(code_output, (uint8_t)(disp & 0xFF));
+                        BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+                        BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+                        BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+                    }
+
+                    // lea rax, [rbp - offset]
+                    if (slot <= 128) {
+                        // 8-bit displacement path
+                        BS_write(code_output, 0x48);
+                        BS_write(code_output, 0x8D);
+                        BS_write(code_output, 0x45);               // ModR/M for [rbp + disp8]
+                        BS_write(code_output, (uint8_t)(-slot));
+                    } else {
+                        // 32-bit displacement path
+                        const int32_t disp = -slot;
+
+                        BS_write(code_output, 0x48);
+                        BS_write(code_output, 0x8D);
+                        BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
+
+                        // Write 32-bit negative displacement (Little-Endian)
+                        BS_write(code_output, (uint8_t)(disp & 0xFF));
+                        BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+                        BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+                        BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+                    }
+                    break;
                 }
+                case LOC_VAR: {
+                    const int slot = lookup_var(expr.var);
 
-                // lea rax, [rbp - offset]
-                if (slot <= 128) {
-                    // 8-bit displacement path
-                    BS_write(code_output, 0x48);
-                    BS_write(code_output, 0x8D);
-                    BS_write(code_output, 0x45);               // ModR/M for [rbp + disp8]
-                    BS_write(code_output, (uint8_t)(-slot));
-                } else {
-                    // 32-bit displacement path
-                    const int32_t disp = -slot;
 
-                    BS_write(code_output, 0x48);
-                    BS_write(code_output, 0x8D);
-                    BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
+                    // lea rax, [rbp - offset]
+                    if (slot <= 128) {
+                        // 8-bit displacement path
+                        BS_write(code_output, 0x48);
+                        BS_write(code_output, 0x8D);
+                        BS_write(code_output, 0x45);               // ModR/M for [rbp + disp8]
+                        BS_write(code_output, (uint8_t)(-slot));
+                    } else {
+                        // 32-bit displacement path
+                        const int32_t disp = -slot;
 
-                    // Write 32-bit negative displacement (Little-Endian)
-                    BS_write(code_output, (uint8_t)(disp & 0xFF));
-                    BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-                    BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-                    BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+                        BS_write(code_output, 0x48);
+                        BS_write(code_output, 0x8D);
+                        BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
+
+                        // Write 32-bit negative displacement (Little-Endian)
+                        BS_write(code_output, (uint8_t)(disp & 0xFF));
+                        BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+                        BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+                        BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+                    }
+
+                    break;
                 }
-                break;
             }
-            case LOC_VAR: {
-                const int slot = lookup_var(expr.var);
 
 
-                // lea rax, [rbp - offset]
-                if (slot <= 128) {
-                    // 8-bit displacement path
-                    BS_write(code_output, 0x48);
-                    BS_write(code_output, 0x8D);
-                    BS_write(code_output, 0x45);               // ModR/M for [rbp + disp8]
-                    BS_write(code_output, (uint8_t)(-slot));
-                } else {
-                    // 32-bit displacement path
-                    const int32_t disp = -slot;
-
-                    BS_write(code_output, 0x48);
-                    BS_write(code_output, 0x8D);
-                    BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
-
-                    // Write 32-bit negative displacement (Little-Endian)
-                    BS_write(code_output, (uint8_t)(disp & 0xFF));
-                    BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-                    BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-                    BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
-                }
-
-                break;
-            }
+            // LEN
+            // mov ebx, 0x1
+            BS_write_array(code_output, 5, (uint8_t[]){0xBB, 0x01, 0x00, 0x00, 0x00});
         }
 
-
-        // call <__print_char>
+        // str addr is in rax
+        // call <__print>
         const size_t pos = BS_get_cursor(code_output) + 1;
         uint8_t call[] = {
             0xe8, 0x00, 0x00, 0x00, 0x00, //          call <>
         };
         BS_write_array(code_output, sizeof(call), call);
         FCPL_register_patch(&function_patch_list, (FunctionCallPatch){
-                               .name = SV_from_string_len("__print_char", 12),
+                               .name = SV_from_string_len("__print", 7),
                                .offset = pos,
                                .relative = true,
                                .bit_size = 4,
@@ -1562,13 +1612,15 @@ void process_elf64(const StringView* restrict input, const StringView* restrict 
                });
 
 
-    // __print_char
+    // __print
     // expects addr of char in RAX
     uint8_t print_char_util[] = {
         0x48, 0x89, 0xC6, // mov rsi, rax
         0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1  (sys_write)
         0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00, // mov rdi, 1  (stdout)
-        0x48, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, // mov rdx, 1  (len)
+
+        0x48, 0x89, 0xDA, // mov    rdx,rbx (len)
+        // 0x48, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00, // mov rdx, 1  (len)
         0x0F, 0x05, // syscall
         0xC3, // ret
     };
@@ -1652,7 +1704,7 @@ void process_elf64(const StringView* restrict input, const StringView* restrict 
                          });
 
     FR_register_function(&functions_registry, (Function){
-                             .name = SV_from_string_len("__print_char", 12),
+                             .name = SV_from_string_len("__print", 7),
                              .offset = sizeof(entry_point) + sizeof(rt_zero_div_handler),
                              .code_size = sizeof(print_char_util),
                              .returns_value = false,
@@ -1835,7 +1887,7 @@ void process_win64(const StringView* restrict input, const StringView* restrict 
 
 
 
-    // __print_char
+    // __print
     // expects addr of char in RAX
     uint8_t print_char_util[] = {
         0x55,                   // push    rbp
@@ -1843,7 +1895,9 @@ void process_win64(const StringView* restrict input, const StringView* restrict 
         0x48, 0x83, 0xEC, 0x48, // sub     rsp, 0x48
 
 
-        0x49, 0x89, 0xC5, // mov r13, rax
+        0x49, 0x89, 0xC5, // mov r13, rax (save ptr)
+        0x49, 0x89, 0xDE, // mov r14, rbx (save len)
+
 
         // GetStdHandle()
         0x48, 0xC7, 0xC1, 0xF5, 0xFF, 0xFF, 0xFF,                   // mov    rcx,0xfffffffffffffff5
@@ -1856,7 +1910,9 @@ void process_win64(const StringView* restrict input, const StringView* restrict 
         0x48, 0xC7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00,       // mov    QWORD PTR [rsp+0x20],0x0
         0x4C, 0x8D, 0x4C, 0x24, 0x28,                               // lea    r9,[rsp+0x28]
         0x4c, 0x89, 0xe1,                                           // mov    rcx,r12 ; restore std hadle
-        0x49, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00,                   // mov    r8,0x1
+
+        0x4D, 0x89, 0xF0, // mov    r8,r14 (len)
+
         0x48, 0xB8, 0x08, 0x10, 0x00, 0x40, 0x01, 0x00, 0x00, 0x00, // movabs rax,0x140001008
         0x4C, 0x89, 0xEA,                                           // mov rdx, r13 ; restore char ptr
         0xFF, 0x10,                                                 // call   QWORD PTR [rax]
@@ -1924,7 +1980,7 @@ void process_win64(const StringView* restrict input, const StringView* restrict 
                          });
 
     FR_register_function(&functions_registry, (Function){
-                             .name = SV_from_string_len("__print_char", 12),
+                             .name = SV_from_string_len("__print", 7),
                              .offset = sizeof(entry_point) + sizeof(rt_zero_div_handler),
                              .code_size = sizeof(print_char_util),
                              .returns_value = false,

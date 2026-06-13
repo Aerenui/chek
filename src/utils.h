@@ -22,6 +22,9 @@ StringView SV_lslice_from_SV(const StringView*, size_t);
 StringView SV_lrslice_from_SV(const StringView*, size_t, size_t);
 
 void SV_p_printf(const StringView*);
+#define SV_format "%.*s"
+#define SV_p_args(X) (int)X->len, X->start
+#define SV_v_args(X) (int)X.len, X.start
 
 bool SV_pp_cmp_eq(const StringView*, const StringView*);
 bool SV_pv_cmp_eq(const StringView*, const char*, size_t);

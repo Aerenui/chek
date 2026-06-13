@@ -19,8 +19,9 @@ int main()
     while i < 11 do
         int result: 0;
         call fac(i) into result;
+        print "factorial of ";
         call print_int(i);
-        print 32;
+        print " is ";
         call print_int(result);
         print 10;
         set i: i+1;

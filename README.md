@@ -84,7 +84,7 @@ end
 ```
 
 ### expressions
-Rules of associativity apply here as follows: `*`, `/`, `%`, then `+`, '-', then `<`, `>`, `=`, `!`, then `|`, `&`.
+Rules of associativity apply here as follows: `*`, `/`, `%`, then `+`, '-', then `<`, `>`, `=`, `!`, then `&`, and then `|`.
 Be aware the `!` means *not equal*.
 > math operators: `+` `-` `*` `/` `%`
 > comparison operators: `<` `>` `=`, `!`
@@ -105,11 +105,15 @@ call print_int(123); # this is comment
 ```
 
 ### print
-> print <expr> <expr> ...;
-Prints ASCII codes.
+> print <expr or string> <expr or string> ...;
+Prints ASCII codes or literal text strings. 
+Expressions are evaluated and printed as their corresponding ASCII characters. 
+String literals are printed directly as they are.
 ```
-print 10; # prints new line (\n in asci 10)
-print 97 98; # prints 'ab' (97 -> a, 98 -> b)
+print 10;                # prints new line (\n in asci 10)
+print 97 98;             # prints 'ab' (97 -> a, 98 -> b)
+print "Hello World!" 64; # prints 'Hello World!@' (64 -> @)
+print "Hi!";             # prints 'Hi!'
 ```
 
 ### if conditional
