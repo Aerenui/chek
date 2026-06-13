@@ -13,6 +13,7 @@
 #include "error.h"
 #include "utils.h"
 #include "main.h"
+#include "arch_specific/x86_64.h"
 
 
 bool is_digit(const char c) {
@@ -117,7 +118,6 @@ Loc get_int_expr(StringViewListView* view, const CompilerTarget target, const bo
 
     for (size_t i = 0; i < ot.len; i++) {
         const StringView sv = ot.array[i];
-        // printf("  i=%zu sv='%.*s' stack_size=%zu\n", i, (int)sv.len, sv.start, stack2.len);
         GlobalPatchList* globals_patch_ptr = is_local ? &global_patch_list : &global_patch_list_initializer;
 
         if (is_operator(sv.start[0])) {
@@ -463,39 +463,15 @@ Loc get_int_expr(StringViewListView* view, const CompilerTarget target, const bo
                                 break;
                             }
                         }
-                        // BS_write(code_output, 0x89); // MOV [rbp - s2_slot], ecx
-                        // BS_write(code_output, 0x4D);
-                        // BS_write(code_output, (uint8_t) (-s2_slot));
+
                         // MOV [rbp - s2_slot], ecx
-                        if (s2_slot <= 128) {
-                            // 8-bit displacement path
-                            BS_write(code_output, 0x89);
-                            BS_write(code_output, 0x4D);               // ModR/M for [rbp + disp8]
-                            BS_write(code_output, (uint8_t)(-s2_slot));
-                        } else {
-                            // 32-bit displacement path
-                            const int32_t disp = -s2_slot;
-
-                            BS_write(code_output, 0x89);
-                            BS_write(code_output, 0x8D);               // ModR/M for [rbp + disp32] (0x4D + 0x40)
-
-                            // Write 32-bit negative displacement (Little-Endian)
-                            BS_write(code_output, (uint8_t)(disp & 0xFF));
-                            BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-                            BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-                            BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
-                        }
+                        emit_mov_slot_eax(code_output, s2_slot);
                         break;
                     }
                 }
 
                 // RUNTIME ZERO DIV CHECK
 
-                // // cmp dword ptr [rbp - s2_slot], 0
-                // BS_write(code_output, 0x83);
-                // BS_write(code_output, 0x7D);
-                // BS_write(code_output, (uint8_t) (-s2_slot));
-                // BS_write(code_output, 0x00);
                 // cmp dword ptr [rbp - s2_slot], 0
                 if (s2_slot <= 128) {
                     // 8-bit displacement path
@@ -505,7 +481,7 @@ Loc get_int_expr(StringViewListView* view, const CompilerTarget target, const bo
                     BS_write(code_output, 0x00);               // Immediate byte
                 } else {
                     // 32-bit displacement path
-                    int32_t disp = -s2_slot;
+                    const int32_t disp = -s2_slot;
 
                     BS_write(code_output, 0x83);
                     BS_write(code_output, 0xBD);               // ModR/M for [rbp + disp32] (0x7D + 0x40)
@@ -519,22 +495,23 @@ Loc get_int_expr(StringViewListView* view, const CompilerTarget target, const bo
                     BS_write(code_output, 0x00);               // Immediate byte comes after the displacement
                 }
 
+                uint8_t call_divz[] = {0xe8, 0x00, 0x00, 0x00, 0x00};
+
                 // jnz +5  (skip the call)
                 BS_write(code_output, 0x75);
-                BS_write(code_output, 0x05);
+                BS_write(code_output, sizeof(call_divz));
 
                 // call <__rt_exception__zero_div>  (5 bytes, needs patching like your entry_point)
                 const size_t divz_patch_cursor = BS_get_cursor(code_output) + 1;
-                uint8_t call_divz[] = {0xe8, 0x00, 0x00, 0x00, 0x00};
                 BS_write_array(code_output, sizeof(call_divz), call_divz);
 
                 FCPL_register_patch(&function_patch_list, (FunctionCallPatch){
-                                       .name = SV_from_string_len("__rt_exception__zero_div", 24),
-                                       .offset = divz_patch_cursor,
-                                       .relative = true,
-                                       .bit_size = 4,
-                                       .is_local = is_local,
-                                   });
+                    .name = SV_from_string_len("__rt_exception__zero_div", 24),
+                    .offset = divz_patch_cursor,
+                    .relative = true,
+                    .bit_size = 4,
+                    .is_local = is_local,
+                });
 
                 // END OF RUNTIME ZERO DIV CHECK
 
@@ -542,10 +519,7 @@ Loc get_int_expr(StringViewListView* view, const CompilerTarget target, const bo
                 // cdq — sign-extend eax into edx:eax
                 BS_write(code_output, 0x99);
 
-                // // idiv dword ptr [rbp - s2_slot]
-                // BS_write(code_output, 0xF7);
-                // BS_write(code_output, 0x7D);
-                // BS_write(code_output, (uint8_t) (-s2_slot));
+
                 // idiv dword ptr [rbp - s2_slot]
                 if (s2_slot <= 128) {
                     // 8-bit displacement path
@@ -581,29 +555,9 @@ Loc get_int_expr(StringViewListView* view, const CompilerTarget target, const bo
                 slot = global_frame.next_offset;
                 global_frame.next_offset += 4;
             }
-            // // MOV [rbp - slot], eax
-            // BS_write(code_output, 0x89);
-            // BS_write(code_output, 0x45);
-            // BS_write(code_output, (uint8_t) (-slot));
+
             // MOV [rbp - slot], eax
-            if (slot <= 128) {
-                // 8-bit displacement path
-                BS_write(code_output, 0x89);
-                BS_write(code_output, 0x45);               // ModR/M for [rbp + disp8]
-                BS_write(code_output, (uint8_t)(-slot));
-            } else {
-                // 32-bit displacement path
-                const int32_t disp = -slot;
-
-                BS_write(code_output, 0x89);
-                BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32] (0x4D + 0x40)
-
-                // Write 32-bit negative displacement (Little-Endian)
-                BS_write(code_output, (uint8_t)(disp & 0xFF));
-                BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-                BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-                BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
-            }
+            emit_mov_slot_eax(code_output, slot);
 
             LS_push(&stack2, (Loc){.kind = LOC_STACK_SLOT, .offset = slot});
         } else if (is_alpha(sv.start[0])) {

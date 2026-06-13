@@ -1,4 +1,4 @@
-include "libs/print_int.cm";
+include "libs/print_int.ce";
 
 
 int fac(n)

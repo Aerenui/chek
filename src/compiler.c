@@ -2,10 +2,10 @@
 
 #include <assert.h>
 #include <stdio.h>
-#include <string.h>
 #include <limits.h>
 
 #include "error.h"
+#include "arch_specific/x86_64.h"
 #ifndef PATH_MAX
 #define PATH_MAX 260
 #endif
@@ -23,46 +23,46 @@
 #include "target_specific/win_gen.h"
 
 
-// a counter for generating unique IDs for if/while labels and their relocations
+/// a counter for generating unique IDs for if/while labels and their relocations
 size_t label_cnt = 0;
 
-// output buffer for compilation of all functions
+/// output buffer for compilation of all functions
 ByteSeg code_output_funcs;
 
-// output buffer for globals initialization code
+/// output buffer for globals initialization code
 ByteSeg code_output_globals;
 
-// pointer to current output buffer
+/// pointer to current output buffer
 ByteSeg* code_output;
 
-// list of relocations to be patched
+/// list of relocations to be patched
 RelocationList relocations;
 
-// list of labes used in patching relocations
+/// list of labes used in patching relocations
 LabelList labels;
 
-// registry of all compiled functions, used for function calls and entry point
+/// registry of all compiled functions, used for function calls and entry point
 static FunctionsRegistry functions_registry;
 
-// list of unresolved call sites to be patched after everything is compiled
+/// list of unresolved call sites to be patched after everything is compiled
 FunctionCallPatchList function_patch_list;
 
-// registry of all declared global variables and their offsets
+/// registry of all declared global variables and their offsets
 GlobalsRegistry globals_registry;
 
-// global address patches for regular function bodies
+/// global address patches for regular function bodies
 GlobalPatchList global_patch_list;
 
-// global address patches for the global initializer code (__global function)
+/// global address patches for the global initializer code (__global function)
 GlobalPatchList global_patch_list_initializer;
 
-// source imports tracking to prevent duplicate compilation and name collisions
+/// source imports tracking to prevent duplicate compilation and name collisions
 static StringViewList import_table;
 
-// string literal constants (written into .rodata), used by runtime errors only
+/// string literal constants (written into .rodata), used by runtime errors only
 static StringViewList string_consts;
 
-// relocations for string literal constants
+/// relocations for string literal constants
 static StringConstAddrRelocationList string_consts_relocations;
 
 // list of pointers to be freed after compilation but are out of normal allocations
@@ -146,7 +146,6 @@ size_t add_str_const(const StringView sv) {
 
 void get_stmt(StringViewListView*, bool, CompilerTarget, bool in_inlining);
 
-bool is_operator(char);
 
 int lookup_var(const StringView name) {
     for (size_t i = var_table_length; i-- > 0;) {
@@ -213,38 +212,7 @@ void materialize_const_var(VarEntry* var, const bool include_value) {
     const int slot = alloc_stack_slot(&frame);
 
     if (include_value) {
-        // // write value to stack
-        // BS_write(code_output, 0xC7);
-        // BS_write(code_output, 0x45);
-        // BS_write(code_output, (uint8_t) (-slot));
-        // BS_write(code_output, (var->vm_value >> 0) & 0xFF);
-        // BS_write(code_output, (var->vm_value >> 8) & 0xFF);
-        // BS_write(code_output, (var->vm_value >> 16) & 0xFF);
-        // BS_write(code_output, (var->vm_value >> 24) & 0xFF);
-        // MOV [rbp - slot], imm32
-        if (slot <= 128) {
-            BS_write(code_output, 0xC7);               // Opcode for MOV r/m32, imm32
-            BS_write(code_output, 0x45);               // ModR/M for [rbp + disp8] (/0 extension)
-            BS_write(code_output, (uint8_t) (-slot));   // 8-bit negative displacement
-        } else {
-            // 32-bit displacement path
-            const int32_t disp = -slot;
-
-            BS_write(code_output, 0xC7);               // Opcode for MOV r/m32, imm32
-            BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32] (/0 extension)
-
-            // Write 32-bit negative displacement (Little-Endian)
-            BS_write(code_output, (uint8_t)(disp & 0xFF));
-            BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-            BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-            BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
-        }
-
-        // Write 32-bit immediate value (Little-Endian)
-        BS_write(code_output, (uint8_t)(var->vm_value & 0xFF));
-        BS_write(code_output, (uint8_t)((var->vm_value >> 8) & 0xFF));
-        BS_write(code_output, (uint8_t)((var->vm_value >> 16) & 0xFF));
-        BS_write(code_output, (uint8_t)((var->vm_value >> 24) & 0xFF));
+        emit_mov_slot_imm32(code_output, slot, var->vm_value);
     }
 
     var->offset = slot;
@@ -371,8 +339,8 @@ void get_return_stmt(StringViewListView* view, const bool should_return_value, c
 
     // JMP fn_end_<id> (placeholder)
     BS_write(code_output, 0xE9);
-    size_t jmp_patch = BS_get_cursor(code_output);
-    size_t jmp_end = jmp_patch + 4;
+    const size_t jmp_patch = BS_get_cursor(code_output);
+    const size_t jmp_end = jmp_patch + 4;
     BS_write_array(code_output, 4, (uint8_t[]){0x00, 0x00, 0x00, 0x00});
     RL_push(&relocations, (Relocation){
                 .patch_pos = jmp_patch,
@@ -414,26 +382,14 @@ void get_int_var_dec(StringViewListView* view, const CompilerTarget target) {
     } else {
         const int slot = declare_var(var_name, VM_RUNTIME, 0);
 
-        // move last into eax
-        emit_mov_eax(code_output, last, &global_patch_list, target);
-
-        // MOV [rbp - slot], eax
-        if (slot <= 128) {
-            BS_write(code_output, 0x89);
-            BS_write(code_output, 0x45);
-            BS_write(code_output, (uint8_t) (-slot));
+        if (last.kind == LOC_IMMEDIATE) {
+            emit_mov_slot_imm32(code_output, slot, last.value);
         } else {
-            // 32-bit displacement path
-            const int32_t disp = -slot;
+            // move last into eax
+            emit_mov_eax(code_output, last, &global_patch_list, target);
 
-            BS_write(code_output, 0x89);
-            BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
-
-            // Write 32-bit negative displacement (Little-Endian)
-            BS_write(code_output, (uint8_t)(disp & 0xFF));
-            BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-            BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-            BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+            // move to slot from eax
+            emit_mov_slot_eax(code_output, slot);
         }
     }
 
@@ -454,7 +410,7 @@ void get_int_var_set(StringViewListView* view, const CompilerTarget target) {
         exit(1);
     }
 
-    StringView assign = SVLV_consume_one(view);
+    const StringView assign = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&assign, ":", 1)) {
         // error
         srcmap_error(&source_map, assign.start, "expected ':' in variable change, got '"SV_format"'", SV_v_args(assign));
@@ -471,9 +427,9 @@ void get_int_var_set(StringViewListView* view, const CompilerTarget target) {
                     var->vm_value = last.value;
                     get_semicolon(view);
                     return;
-                } else {
-                    materialize_const_var(var, true);
                 }
+
+                materialize_const_var(var, true);
             }
         }
     }
@@ -482,26 +438,8 @@ void get_int_var_set(StringViewListView* view, const CompilerTarget target) {
     // move last into eax
     emit_mov_eax(code_output, last, &global_patch_list, target);
 
-
     if (is_local) {
-        // MOV [rbp - slot], eax
-        if (slot <= 128) {
-            BS_write(code_output, 0x89);
-            BS_write(code_output, 0x45);
-            BS_write(code_output, (uint8_t) (-slot));
-        } else {
-            // 32-bit displacement path
-            const int32_t disp = -slot;
-
-            BS_write(code_output, 0x89);
-            BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
-
-            // Write 32-bit negative displacement (Little-Endian)
-            BS_write(code_output, (uint8_t)(disp & 0xFF));
-            BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-            BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-            BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
-        }
+        emit_mov_slot_eax(code_output, slot);
     } else {
         switch (target) {
         case F_Elf64: {
@@ -728,8 +666,8 @@ void get_while_conditional(StringViewListView* view, const bool should_return_va
 
     // JE end_<id> (placeholder)
     BS_write_array(code_output, 2, (uint8_t[]){0x0F, 0x84});
-    size_t je_patch = BS_get_cursor(code_output);
-    size_t je_end = je_patch + 4;
+    const size_t je_patch = BS_get_cursor(code_output);
+    const size_t je_end = je_patch + 4;
     BS_write_array(code_output, 4, (uint8_t[]){0x00, 0x00, 0x00, 0x00});
     RL_push(&relocations, (Relocation){
                 .patch_pos = je_patch,
@@ -816,73 +754,18 @@ void get_print_stmt(StringViewListView* view, const CompilerTarget target) {
                 case LOC_GLOBAL: {
                     emit_mov_eax(code_output, expr, &global_patch_list, target);
                     const int slot = alloc_tmp_stack_slot(&frame);
-                    // mov [rbp - offset], eax
-                    if (slot <= 128) {
-                        BS_write(code_output, 0x89);
-                        BS_write(code_output, 0x45);
-                        BS_write(code_output, (uint8_t) (-slot));
-                    } else {
-                        // 32-bit displacement path
-                        const int32_t disp = -slot;
 
-                        BS_write(code_output, 0x89);
-                        BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
-
-                        // Write 32-bit negative displacement (Little-Endian)
-                        BS_write(code_output, (uint8_t)(disp & 0xFF));
-                        BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-                        BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-                        BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
-                    }
+                    emit_mov_slot_eax(code_output, slot);
 
                     // lea rax, [rbp - offset]
-                    if (slot <= 128) {
-                        // 8-bit displacement path
-                        BS_write(code_output, 0x48);
-                        BS_write(code_output, 0x8D);
-                        BS_write(code_output, 0x45);               // ModR/M for [rbp + disp8]
-                        BS_write(code_output, (uint8_t)(-slot));
-                    } else {
-                        // 32-bit displacement path
-                        const int32_t disp = -slot;
-
-                        BS_write(code_output, 0x48);
-                        BS_write(code_output, 0x8D);
-                        BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
-
-                        // Write 32-bit negative displacement (Little-Endian)
-                        BS_write(code_output, (uint8_t)(disp & 0xFF));
-                        BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-                        BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-                        BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
-                    }
+                    emit_lea_rax_slot(code_output, slot);
                     break;
                 }
                 case LOC_VAR: {
                     const int slot = lookup_var(expr.var);
 
-
                     // lea rax, [rbp - offset]
-                    if (slot <= 128) {
-                        // 8-bit displacement path
-                        BS_write(code_output, 0x48);
-                        BS_write(code_output, 0x8D);
-                        BS_write(code_output, 0x45);               // ModR/M for [rbp + disp8]
-                        BS_write(code_output, (uint8_t)(-slot));
-                    } else {
-                        // 32-bit displacement path
-                        const int32_t disp = -slot;
-
-                        BS_write(code_output, 0x48);
-                        BS_write(code_output, 0x8D);
-                        BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
-
-                        // Write 32-bit negative displacement (Little-Endian)
-                        BS_write(code_output, (uint8_t)(disp & 0xFF));
-                        BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-                        BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-                        BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
-                    }
+                    emit_lea_rax_slot(code_output, slot);
 
                     break;
                 }
@@ -902,12 +785,12 @@ void get_print_stmt(StringViewListView* view, const CompilerTarget target) {
         };
         BS_write_array(code_output, sizeof(call), call);
         FCPL_register_patch(&function_patch_list, (FunctionCallPatch){
-                               .name = SV_from_string_len("__print", 7),
-                               .offset = pos,
-                               .relative = true,
-                               .bit_size = 4,
+            .name = SV_from_string_len("__print", 7),
+            .offset = pos,
+            .relative = true,
+            .bit_size = 4,
             .is_local = true,
-                           });
+        });
 
     }
     get_semicolon(view);
@@ -946,26 +829,9 @@ void get_inlined_function_call_stmt_intern(StringViewListView* restrict view, co
             emit_mov_eax(code_output, arg_val, &global_patch_list, target);
             const int slot = declare_var(inl.args.array[i], VM_RUNTIME, 0);
 
-            // MOV [rbp - slot], eax
-            if (slot <= 128) {
-                BS_write(code_output, 0x89);
-                BS_write(code_output, 0x45);
-                BS_write(code_output, (uint8_t) (-slot));
-            } else {
-                // 32-bit displacement path
-                const int32_t disp = -slot;
-
-                BS_write(code_output, 0x89);
-                BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
-
-                // Write 32-bit negative displacement (Little-Endian)
-                BS_write(code_output, (uint8_t)(disp & 0xFF));
-                BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-                BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-                BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
-            }
+            // mov [rbp - slot], eax
+            emit_mov_slot_eax(code_output, slot);
         }
-
 
 
         expected_args--;
@@ -1018,23 +884,7 @@ void get_inlined_function_call_stmt_intern(StringViewListView* restrict view, co
             const int slot = lookup_var(into_var);
 
             // MOV [rbp - slot], eax
-            if (slot <= 128) {
-                BS_write(code_output, 0x89);
-                BS_write(code_output, 0x45);
-                BS_write(code_output, (uint8_t) (-slot));
-            } else {
-                // 32-bit displacement path
-                const int32_t disp = -slot;
-
-                BS_write(code_output, 0x89);
-                BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
-
-                // Write 32-bit negative displacement (Little-Endian)
-                BS_write(code_output, (uint8_t)(disp & 0xFF));
-                BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-                BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-                BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
-            }
+            emit_mov_slot_eax(code_output, slot);
 
             get_semicolon(view);
         } else {
@@ -1088,26 +938,14 @@ void get_function_call_stmt(StringViewListView* restrict view, const CompilerTar
 
         const Loc last = get_int_expr(view, target, true);
 
-        // move last into eax
-        emit_mov_eax(code_output, last, &global_patch_list, target);
-
-        // MOV [rbp - slot], eax
-        if (slot <= 128) {
-            BS_write(code_output, 0x89);
-            BS_write(code_output, 0x45);
-            BS_write(code_output, (uint8_t) (-slot));
+        if (last.kind == LOC_IMMEDIATE) {
+             emit_mov_slot_imm32(code_output, slot, last.value);
         } else {
-            // 32-bit displacement path
-            const int32_t disp = -slot;
+            // move last into eax
+            emit_mov_eax(code_output, last, &global_patch_list, target);
 
-            BS_write(code_output, 0x89);
-            BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
-
-            // Write 32-bit negative displacement (Little-Endian)
-            BS_write(code_output, (uint8_t)(disp & 0xFF));
-            BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-            BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-            BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+            // MOV [rbp - slot], eax
+            emit_mov_slot_eax(code_output, slot);
         }
 
         expected_args--;
@@ -1200,23 +1038,7 @@ void get_function_call_stmt(StringViewListView* restrict view, const CompilerTar
             const int slot = lookup_var(into_var);
 
             // MOV [rbp - slot], eax
-            if (slot <= 128) {
-                BS_write(code_output, 0x89);
-                BS_write(code_output, 0x45);
-                BS_write(code_output, (uint8_t) (-slot));
-            } else {
-                // 32-bit displacement path
-                const int32_t disp = -slot;
-
-                BS_write(code_output, 0x89);
-                BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
-
-                // Write 32-bit negative displacement (Little-Endian)
-                BS_write(code_output, (uint8_t)(disp & 0xFF));
-                BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
-                BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
-                BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
-            }
+            emit_mov_slot_eax(code_output, slot);
 
             get_semicolon(view);
         } else {
@@ -1245,7 +1067,6 @@ void get_stmt(StringViewListView* view, const bool should_return_value, const Co
         get_function_call_stmt(view, target, &s1);
     } else {
         srcmap_error(&source_map, s1.start, "unknown start of statement");
-        // printf("STMT: unknown\n");
         exit(1);
     }
 }
@@ -1270,6 +1091,16 @@ void get_function(StringViewListView* view, const CompilerTarget target) {
     }
 
     const StringView f_name = SVLV_consume_one(view);
+
+    bool has_predef = false;
+    if (FR_has_function(&functions_registry, f_name)) {
+        const Function f = FR_lookup_function(&functions_registry, f_name);
+        if (!f.is_just_predef) {
+            srcmap_error(&source_map, f_name.start, "function with name '"SV_format"' already exists", SV_v_args(f_name));
+            exit(1);
+        }
+        has_predef = true;
+    }
 
     if (SV_pv_cmp_eq(&f_name, "main", 4)) {
         function_inline_candidate = false;
@@ -1301,14 +1132,22 @@ void get_function(StringViewListView* view, const CompilerTarget target) {
     }
 
     // temp write
-    FR_register_function(&functions_registry, (Function){
-                             .name = f_name,
-                             .arg_count = f_args.len,
-                             .offset = f_start_cursor,
-                             .code_size = 0,
-                             .returns_value = returns_value,
-                             .is_just_predef = true,
-                         });
+    {
+        const Function f = (Function){
+            .name = f_name,
+            .arg_count = f_args.len,
+            .offset = f_start_cursor,
+            .code_size = 0,
+            .returns_value = returns_value,
+            .is_just_predef = true,
+        };
+        if(has_predef) {
+            FR_overwrite_function(&functions_registry, f);
+        } else {
+            FR_register_function(&functions_registry, f);
+        }
+    }
+
 
 
     // emit stack preparation for frame
@@ -1341,7 +1180,7 @@ void get_function(StringViewListView* view, const CompilerTarget target) {
             // 8-bit displacement path
             BS_write(code_output, param_store_modrm[i]);
             BS_write(code_output, (uint8_t)(-slot));
-        } else { // should be unnesesary, but just in case
+        } else { // should be unnecessary, but just in case
             // 32-bit displacement path
             const int32_t disp = -slot;
 
@@ -1358,7 +1197,7 @@ void get_function(StringViewListView* view, const CompilerTarget target) {
     const uint8_t args_count = f_args.len;
 
 
-    StringViewListView f_block = *view;
+    const StringViewListView f_block = *view;
     get_stmt_block(view, returns_value, target, false);
 
     const StringView f_end = SVLV_consume_one(view);
@@ -1546,6 +1385,14 @@ bool is_global_next(StringViewListView* list) {
     return false;
 }
 
+bool is_predef_next(StringViewListView* list) {
+    if (SVLV_is_empty(list)) return false;
+
+    const StringView sv = SVLV_inspect_back(list);
+    if (SV_pv_cmp_eq(&sv, "declare", 7)) return true;
+    return false;
+}
+
 void set_code_target_buffer_globals(void) {
     code_output = &code_output_globals;
 }
@@ -1603,7 +1450,7 @@ void get_global_var(StringViewListView* view, const CompilerTarget target) {
             break;
         }
         case F_Win64: {
-            size_t pos = BS_get_cursor(code_output) + 2;
+            const size_t pos = BS_get_cursor(code_output) + 2;
             uint8_t store[] = {
                 0x48, 0xB9, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rcx, imm64
                 0x89, 0x01, // mov [rcx], eax
@@ -1615,17 +1462,17 @@ void get_global_var(StringViewListView* view, const CompilerTarget target) {
                 exit(1);
             }
 
-            size_t globals_index = GR_register_global(&globals_registry, (Global){
-                                                          .name = name,
-                                                          .bss_offset = (int)alloc_bss_space(4)
-                                                      });
+            const size_t globals_index = GR_register_global(&globals_registry, (Global){
+                .name = name,
+                .bss_offset = (int)alloc_bss_space(4)
+            });
 
             GPL_register_patch(&global_patch_list_initializer, (GlobalPatch){
-                                   .index = globals_index,
-                                   .offset = pos,
-                                   .relative = false,
-                                   .bit_size = 8
-                               });
+                .index = globals_index,
+                .offset = pos,
+                .relative = false,
+                .bit_size = 8
+            });
 
             break;
         }
@@ -1634,6 +1481,66 @@ void get_global_var(StringViewListView* view, const CompilerTarget target) {
     get_semicolon(view);
 
     set_code_target_buffer_funcs();
+}
+
+void get_function_predef(StringViewListView* view) {
+    const size_t f_start_cursor = BS_get_cursor(code_output);
+    SVLV_consume_one(view); // declare
+    const StringView ret_type = SVLV_consume_one(view);
+    bool returns_value = false;
+    if (SV_pv_cmp_eq(&ret_type, "int", 3)) {
+        returns_value = true;
+    } else if (SV_pv_cmp_eq(&ret_type, "void", 4)) {
+    } else {
+        srcmap_error(&source_map, ret_type.start, "expected either 'int' or 'void' as return type, got '"SV_format"'", SV_v_args(ret_type));
+        exit(1);
+    }
+
+    const StringView f_name = SVLV_consume_one(view);
+
+    if (FR_has_function(&functions_registry, f_name)) {
+        srcmap_error(&source_map, f_name.start, "function with name '"SV_format"' already exists", SV_v_args(f_name));
+        exit(1);
+    }
+
+    const StringView f_args_start = SVLV_consume_one(view);
+    if (!SV_pv_cmp_eq(&f_args_start, "(", 1)) {
+        srcmap_error(&source_map, f_args_start.start, "expected '(', got '"SV_format"'", SV_v_args(f_args_start));
+        exit(1);
+    }
+
+    // StringViewList f_args = SVL_new();
+    uint32_t arg_count = 0;
+    while (true) {
+        StringView s = SVLV_consume_one(view);
+        if (SV_pv_cmp_eq(&s, ")", 1)) {
+            break;
+        }
+        arg_count += 1;
+
+        StringView comma = SVLV_consume_one(view);
+        if (SV_pv_cmp_eq(&comma, ")", 1)) {
+            break;
+        } else if (SV_pv_cmp_eq(&comma, ",", 1)) {
+            // ok
+        } else {
+            srcmap_error(&source_map, comma.start, "expected ',' or ')', got '"SV_format"'", SV_v_args(comma));
+            exit(1);
+        }
+    }
+
+    FR_register_function(&functions_registry, (Function){
+        .name = f_name,
+        .arg_count = arg_count,
+        .offset = f_start_cursor,
+        .code_size = 0,
+        .returns_value = returns_value,
+        .is_just_predef = true,
+    });
+
+
+
+    get_semicolon(view);
 }
 
 void compile(StringViewListView* list, const StringView* current_source_file, const CompilerTarget target, const StringView original_text) {
@@ -1657,6 +1564,8 @@ void compile(StringViewListView* list, const StringView* current_source_file, co
     while (list->len > 0) {
         if (is_global_next(list)) {
             get_global_var(list, target);
+        } else if (is_predef_next(list)){
+            get_function_predef(list);
         } else {
             get_function(list, target);
         }

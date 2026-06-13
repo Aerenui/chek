@@ -207,12 +207,6 @@ void SCARL_free(const StringConstAddrRelocationList*);
 
 void SCARL_resolve(const StringConstAddrRelocationList*, uint8_t*, uint64_t, const StringViewList*);
 
-// -----------------------------------------------------------------------------------------
-
-void emit_mov_eax(ByteSeg* out, Loc loc, GlobalPatchList* gpl, CompilerTarget target);
-void emit_op_eax(ByteSeg* out, uint8_t opcode, Loc src, GlobalPatchList* gpl, CompilerTarget target);
-void emit_imul_eax(ByteSeg* out, Loc src, GlobalPatchList* gpl, CompilerTarget target);
-
 
 // -----------------------------------------------------------------------------------------
 

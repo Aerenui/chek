@@ -3,7 +3,7 @@
 # ==========================================
 
 # 1. Imports
-include "libs/print_int.cm";
+include "libs/print_int.ce";
 
 # 2. Global Variables & Constant Expressions
 global int g_var1: 100;

@@ -1,0 +1,40 @@
+include "libs/print_int.ce";
+
+
+declare int is_even(n);
+declare int is_odd(n);
+
+int is_even(n)
+    if n = 0 then
+        return 1;
+    end
+
+    int rs: 0;
+    call is_odd(n - 1) into rs;
+    return rs;
+end
+
+int is_odd(n)
+    if n = 0 then
+        return 0;
+    end
+
+    int rs: 0;
+    call is_even(n - 1) into rs;
+    return rs;
+end
+
+
+int main()
+    int n: 12600;
+
+    int rs: 0;
+    call is_even(n) into rs;
+    print "number "; call print_int(n); print " is ";
+
+    if rs = 0 then
+        print "odd" 10;
+    else
+        print "even" 10;
+    end
+end

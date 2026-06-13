@@ -1,13 +1,16 @@
-# Simple compiler In C (attempt.2)
+# chek
 
-Simple zero-copy single-pass no-IR full compiler written in C.
-Supported formats: elf-x86_64 and win64-x86_64.
+A zero-copy, single-pass, no-dependency, no-IR native compiler written in C.
+Supported targets: elf-x86_64 and win64-x86_64.
 
 Supports only one data type `int` which is 32-bit signed integer. There are **no** string or char literals for now.
 
+Currently, elf-x86_64 and win64-x86_64 targets both use System V AMD64 ABI internally. 
+Since there is no support for FFI and binaries are self-contained, so ABi compatibility with native Win64 is not required.
+
 **Usage**:
 ```bash
-compiler [-o <out>] [-O <opt_level>] [-t win64|elf64] <src>
+chek [-o <out>] [-O <opt_level>] [-t win64|elf64] <src>
 ```
 
 **Optimization levels** (opt_level)
@@ -21,6 +24,24 @@ compiler [-o <out>] [-O <opt_level>] [-t win64|elf64] <src>
     - constant branch evaluation
     - algebraic optimization
     - function inlining (only for functions that either don't have function calls or call inlinable functions)
+
+## architecture
+
+Frontend
+- tokenizer
+- recursive descend parser + Shunting Yard algorithm for expressions
+- semantic analysis
+
+Optimization
+- constant folding
+- constant propagation
+- branch evaluation
+- inlining
+
+Backend
+- x86-64 code generation
+- ELF64 emitter
+- Win64 emitter
 
 ## building from source (linux)
 
@@ -102,11 +123,11 @@ Be aware the `!` means *not equal*.
 > comparison operators: `<` `>` `=`, `!`
 > logical operator: `|` for `or` and `&` for `and`
 ```
-int a: 1 ! 2; # 1 is not eq 2 -> TRUE(1)
-int b: 1 < 2 & 2 < 1; # 1 is less than 2 AND 2 is less than 1 -> FALSE, second condition does not hold
+int a: 1 ! 2;            # 1 is not eq 2 -> TRUE(1)
+int b: 1 < 2 & 2 < 1;    # 1 is less than 2 AND 2 is less than 1 -> FALSE, second condition does not hold
 
 int val: 5;
-int val2: (val * 3) / (val + 1); # = 2 (integer division)
+int val2: (val * 3) / (val + 1); # -> 2 (because / is integer division)
 ```
 
 ### comments
@@ -179,6 +200,34 @@ int add(a, b)
 end
 ```
 
+### function pre-declaration
+In some cases, you want to call a function before it is declared and cannot move the function before.
+> `declare int add(a, b);`
+```
+declare int is_even(n);
+declare int is_odd(n);
+
+int is_even(n)
+    if n = 0 then
+        return 1;
+    end
+    
+    int rs: 0;
+    call is_odd(n - 1) into rs;
+    return rs;
+end
+
+int is_odd(n)
+    if n = 0 then
+        return 0;
+    end
+
+    int rs: 0;
+    call is_even(n - 1) into rs;
+    return rs;
+end
+```
+
 ### recursion
 ```
 int fac(n)
@@ -205,10 +254,20 @@ int main()
     return a + b;
 end
 ```
+
 ### imports
 Include copies over the contents and compiles it before the contents of importer. 
 When the path is relative, it is resolved from the point of the importer's location. 
 > `include "<path>";`
 ```
 include "libs/print_int.cm";
+```
+
+## compilation errors
+
+example:
+```text
+examples/errors/unknown_var.cm:4:12: error: undefined variable 'b'
+      int a: b + 5;
+             ^
 ```
