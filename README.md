@@ -1,14 +1,26 @@
 # Simple compiler In C (attempt.2)
 
-Simple zero-copy single pass full compiler written in C.
+Simple zero-copy single-pass no-IR full compiler written in C.
 Supported formats: elf-x86_64 and win64-x86_64.
 
 Supports only one data type `int` which is 32-bit signed integer. There are **no** string or char literals for now.
 
-Usage:
+**Usage**:
 ```bash
 compiler [-o <out>] [-O <opt_level>] [-t win64|elf64] <src>
 ```
+
+**Optimization levels** (opt_level)
+- level 0 -> no optimization
+- level 1:
+  - constants folding
+  - algebraic optimization
+- level 2 [default]
+    - constants folding
+    - constant variable resolution
+    - constant branch evaluation
+    - algebraic optimization
+    - function inlining (only for functions that either don't have function calls or call inlinable functions)
 
 ## building from source (linux)
 

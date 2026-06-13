@@ -12,17 +12,17 @@ global int G_STATE: 1;
 # Prints "TEST <id>: " followed by "OK\n" (if 1) or "ERR\n" (if 0)
 void report_result(test_id, success_flag)
     # ASCII: T(84) E(69) S(83) T(84) [space](32)
-    print 84 69 83 84 32;
+    print "TEST ";
     print test_id;
     # ASCII: :(58) [space](32)
-    print 58 32;
+    print ": ";
 
     if success_flag = 1 then
         # ASCII: O(79) K(75) \n(10)
-        print 79 75 10;
+        print "OK" 10;
     else
         # ASCII: E(69) R(82) R(82) \n(10)
-        print 69 82 82 10;
+        print "ERR" 10;
         set G_STATE: 0; # Flag global failure
     end
 end
@@ -195,10 +195,10 @@ int main()
     # --------------------------------------------------------------------------
     if G_STATE = 1 then
         # ASCII: A(65) L(76) L(76) [space](32) P(80) A(65) S(83) S(83) E(69) D(68) \n(10)
-        print 65 76 76 32 80 65 83 83 69 68 10;
+        print "ALL PASSED" 10;
     else
         # ASCII: S(83) Y(89) S(83) T(84) E(69) M(77) [space](32) F(70) A(65) I(73) L(76) \n(10)
-        print 83 89 83 84 69 77 32 70 65 73 76 10;
+        print "SYSTEM FAIL" 10;
     end
 
     return 0;

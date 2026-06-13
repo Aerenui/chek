@@ -66,7 +66,7 @@ static StringViewList string_consts;
 static StringConstAddrRelocationList string_consts_relocations;
 
 // list of pointers to be freed after compilation but are out of normal allocations
-char** content_ptrs;
+void** content_ptrs;
 size_t content_ptrs_len = 0;
 size_t content_ptrs_cap = 4;
 
@@ -102,6 +102,7 @@ static size_t var_table_length = 0;
 // used to patch return statements
 static size_t function_end_id;
 
+static bool function_inline_candidate = true;
 
 size_t alloc_bss_space(const uint8_t byte_size) {
     if (bss_alloc_next == 0) {
@@ -143,7 +144,7 @@ size_t add_str_const(const StringView sv) {
 }
 
 
-void get_stmt(StringViewListView*, bool, CompilerTarget);
+void get_stmt(StringViewListView*, bool, CompilerTarget, bool in_inlining);
 
 bool is_operator(char);
 
@@ -154,7 +155,7 @@ int lookup_var(const StringView name) {
             return var_table[i].offset;
     }
     // not found — should not happen if the parser is correct
-    fprintf(stderr, "[ERROR] <internal> lookup_var | undefined variable: %.*s\n", (int) name.len, name.start);
+    fprintf(stderr, "[ERROR] <internal> lookup_var | undefined variable: '"SV_format"'\n", SV_v_args(name));
     exit(1);
 }
 
@@ -165,7 +166,7 @@ VarEntry* get_var(const StringView name) {
             return &var_table[i];
     }
     // not found — should not happen if the parser is correct
-    fprintf(stderr, "[ERROR] <internal> lookup_var | undefined variable: %.*s\n", (int) name.len, name.start);
+    fprintf(stderr, "[ERROR] <internal> lookup_var | undefined variable: '"SV_format"'\n", SV_v_args(name));
     exit(1);
 }
 
@@ -212,14 +213,38 @@ void materialize_const_var(VarEntry* var, const bool include_value) {
     const int slot = alloc_stack_slot(&frame);
 
     if (include_value) {
-        // write value to stack
-        BS_write(code_output, 0xC7);
-        BS_write(code_output, 0x45);
-        BS_write(code_output, (uint8_t) (-slot));
-        BS_write(code_output, (var->vm_value >> 0) & 0xFF);
-        BS_write(code_output, (var->vm_value >> 8) & 0xFF);
-        BS_write(code_output, (var->vm_value >> 16) & 0xFF);
-        BS_write(code_output, (var->vm_value >> 24) & 0xFF);
+        // // write value to stack
+        // BS_write(code_output, 0xC7);
+        // BS_write(code_output, 0x45);
+        // BS_write(code_output, (uint8_t) (-slot));
+        // BS_write(code_output, (var->vm_value >> 0) & 0xFF);
+        // BS_write(code_output, (var->vm_value >> 8) & 0xFF);
+        // BS_write(code_output, (var->vm_value >> 16) & 0xFF);
+        // BS_write(code_output, (var->vm_value >> 24) & 0xFF);
+        // MOV [rbp - slot], imm32
+        if (slot <= 128) {
+            BS_write(code_output, 0xC7);               // Opcode for MOV r/m32, imm32
+            BS_write(code_output, 0x45);               // ModR/M for [rbp + disp8] (/0 extension)
+            BS_write(code_output, (uint8_t) (-slot));   // 8-bit negative displacement
+        } else {
+            // 32-bit displacement path
+            const int32_t disp = -slot;
+
+            BS_write(code_output, 0xC7);               // Opcode for MOV r/m32, imm32
+            BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32] (/0 extension)
+
+            // Write 32-bit negative displacement (Little-Endian)
+            BS_write(code_output, (uint8_t)(disp & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+            BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+        }
+
+        // Write 32-bit immediate value (Little-Endian)
+        BS_write(code_output, (uint8_t)(var->vm_value & 0xFF));
+        BS_write(code_output, (uint8_t)((var->vm_value >> 8) & 0xFF));
+        BS_write(code_output, (uint8_t)((var->vm_value >> 16) & 0xFF));
+        BS_write(code_output, (uint8_t)((var->vm_value >> 24) & 0xFF));
     }
 
     var->offset = slot;
@@ -334,7 +359,7 @@ void get_return_stmt(StringViewListView* view, const bool should_return_value, c
         SVLV_consume_one(view);
     } else {
         if (!should_return_value) {
-            srcmap_error(&source_map, semi_or_val.start, "expected ';' for void function, got '%.*s'", (int)semi_or_val.len, semi_or_val.start);
+            srcmap_error(&source_map, semi_or_val.start, "expected ';' for void function, got '"SV_format"'", SV_v_args(semi_or_val));
             exit(1);
         }
         const Loc val = get_int_expr(view, target, true);
@@ -359,14 +384,14 @@ void get_return_stmt(StringViewListView* view, const bool should_return_value, c
 }
 
 
-void get_stmt_block(StringViewListView* view, const bool should_return_value, const CompilerTarget target) {
+void get_stmt_block(StringViewListView* view, const bool should_return_value, const CompilerTarget target, const bool in_inlining) {
     while (view->len > 0) {
         if (is_stmt_next_return(view)) {
             get_return_stmt(view, should_return_value, target);
             return;
         }
         if (!is_stmt_next(view)) break;
-        get_stmt(view, should_return_value, target);
+        get_stmt(view, should_return_value, target, in_inlining);
     }
 }
 
@@ -378,7 +403,7 @@ void get_int_var_dec(StringViewListView* view, const CompilerTarget target) {
     const StringView assign = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&assign, ":", 1)) {
         // error
-        srcmap_error(&source_map, assign.start, "expected ':' in variable declaration, got '%.*s'", (int)assign.len, assign.start);
+        srcmap_error(&source_map, assign.start, "expected ':' in variable declaration, got '"SV_format"'", SV_v_args(assign));
         exit(1);
     }
 
@@ -425,14 +450,14 @@ void get_int_var_set(StringViewListView* view, const CompilerTarget target) {
         slot = lookup_var(var_name);
     } else if (GR_has_global(&globals_registry,var_name)) {
     } else {
-        srcmap_error(&source_map, var_name.start, "undefined variable '%.*s'", (int)var_name.len, var_name.start);
+        srcmap_error(&source_map, var_name.start, "undefined variable '"SV_format"'", SV_v_args(var_name));
         exit(1);
     }
 
     StringView assign = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&assign, ":", 1)) {
         // error
-        srcmap_error(&source_map, assign.start, "expected ':' in variable change, got '%.*s'", (int)assign.len, assign.start);
+        srcmap_error(&source_map, assign.start, "expected ':' in variable change, got '"SV_format"'", SV_v_args(assign));
         exit(1);
     }
 
@@ -537,14 +562,14 @@ void get_stmt_block_discard(StringViewListView* view) {
 }
 
 
-void get_if_conditional(StringViewListView* view, const bool should_return_value, const CompilerTarget target) {
+void get_if_conditional(StringViewListView* view, const bool should_return_value, const CompilerTarget target, const bool in_inlining) {
     const Loc cond = get_int_expr(view, target, true);
 
     const bool do_constant_branch_evaluation = compiler_flags.constant_branch_evaluation && cond.kind == LOC_IMMEDIATE;
 
     const StringView then = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&then, "then", 4)) {
-        srcmap_error(&source_map, then.start, "expected 'then' after expression in if conditional, got '%.*s'", (int)then.len, then.start);
+        srcmap_error(&source_map, then.start, "expected 'then' after expression in if conditional, got '"SV_format"'", SV_v_args(then));
         exit(1);
     }
 
@@ -558,7 +583,7 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
             // const int frame_next_offset_snapshot = get_frame()->next_offset;
             const size_t var_table_length_snapshot = var_table_length;
 
-            get_stmt_block(view, should_return_value, target);
+            get_stmt_block(view, should_return_value, target, in_inlining);
 
             // get_frame()->next_offset = frame_next_offset_snapshot;
             var_table_length = var_table_length_snapshot;
@@ -580,7 +605,7 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
                 // const int frame_next_offset_snapshot = get_frame()->next_offset;
                 const size_t var_table_length_snapshot = var_table_length;
 
-                get_stmt_block(view, should_return_value, target);
+                get_stmt_block(view, should_return_value, target, in_inlining);
 
                 // get_frame()->next_offset = frame_next_offset_snapshot;
                 var_table_length = var_table_length_snapshot;
@@ -590,7 +615,7 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
 
         const StringView end = SVLV_consume_one(view);
         if (!SV_pv_cmp_eq(&end, "end", 3)) {
-            srcmap_error(&source_map, end.start, "expected 'end' after if conditional, got '%.*s'", (int)end.len, end.start);
+            srcmap_error(&source_map, end.start, "expected 'end' after if conditional, got '"SV_format"'", SV_v_args(end));
             exit(1);
         }
         return;
@@ -620,7 +645,7 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
     // int frame_next_offset_snapshot = get_frame()->next_offset;
     size_t var_table_length_snapshot = var_table_length;
 
-    get_stmt_block(view, should_return_value, target);
+    get_stmt_block(view, should_return_value, target, in_inlining);
 
     // get_frame()->next_offset = frame_next_offset_snapshot;
     var_table_length = var_table_length_snapshot;
@@ -631,8 +656,8 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
 
         // JMP end_<id> (placeholder)
         BS_write(code_output, 0xE9);
-        size_t jmp_patch = BS_get_cursor(code_output);
-        size_t jmp_end = jmp_patch + 4;
+        const size_t jmp_patch = BS_get_cursor(code_output);
+        const size_t jmp_end = jmp_patch + 4;
         BS_write_array(code_output, 4, (uint8_t[]){0x00, 0x00, 0x00, 0x00});
         RL_push(&relocations, (Relocation){
                     .patch_pos = jmp_patch,
@@ -649,7 +674,7 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
         // frame_next_offset_snapshot = get_frame()->next_offset;
         var_table_length_snapshot = var_table_length;
 
-        get_stmt_block(view, should_return_value, target);
+        get_stmt_block(view, should_return_value, target, in_inlining);
 
         // get_frame()->next_offset = frame_next_offset_snapshot;
         var_table_length = var_table_length_snapshot;
@@ -663,12 +688,12 @@ void get_if_conditional(StringViewListView* view, const bool should_return_value
 
     const StringView end = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&end, "end", 3)) {
-        srcmap_error(&source_map, end.start, "expected 'end' after if conditional, got '%.*s'", (int)end.len, end.start);
+        srcmap_error(&source_map, end.start, "expected 'end' after if conditional, got '"SV_format"'", SV_v_args(end));
         exit(1);
     }
 }
 
-void get_while_conditional(StringViewListView* view, const bool should_return_value, const CompilerTarget target) {
+void get_while_conditional(StringViewListView* view, const bool should_return_value, const CompilerTarget target, const bool in_inlining) {
 
     const size_t id = label_cnt++;
 
@@ -678,7 +703,7 @@ void get_while_conditional(StringViewListView* view, const bool should_return_va
 
     const StringView do_keyword = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&do_keyword, "do", 2)) {
-        srcmap_error(&source_map, do_keyword.start, "expected 'do' after expression in while conditional, got '%.*s'", (int)do_keyword.len, do_keyword.start);
+        srcmap_error(&source_map, do_keyword.start, "expected 'do' after expression in while conditional, got '"SV_format"'", SV_v_args(do_keyword));
         exit(1);
     }
 
@@ -687,7 +712,7 @@ void get_while_conditional(StringViewListView* view, const bool should_return_va
         get_stmt_block_discard(view);
         const StringView end = SVLV_consume_one(view);
         if (!SV_pv_cmp_eq(&end, "end", 3)) {
-            srcmap_error(&source_map, end.start, "expected 'end' after while conditional, got '%.*s'", (int)end.len, end.start);
+            srcmap_error(&source_map, end.start, "expected 'end' after while conditional, got '"SV_format"'", SV_v_args(end));
             exit(1);
         }
         return;
@@ -718,7 +743,7 @@ void get_while_conditional(StringViewListView* view, const bool should_return_va
     // const int frame_next_offset_snapshot = get_frame()->next_offset;
     const size_t var_table_length_snapshot = var_table_length;
 
-    get_stmt_block(view, should_return_value, target);
+    get_stmt_block(view, should_return_value, target, in_inlining);
 
     // get_frame()->next_offset = frame_next_offset_snapshot;
     var_table_length = var_table_length_snapshot;
@@ -741,7 +766,7 @@ void get_while_conditional(StringViewListView* view, const bool should_return_va
 
     const StringView end = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&end, "end", 3)) {
-        srcmap_error(&source_map, end.start, "expected 'end' after while conditional, got '%.*s'", (int)end.len, end.start);
+        srcmap_error(&source_map, end.start, "expected 'end' after while conditional, got '"SV_format"'", SV_v_args(end));
         exit(1);
     }
 }
@@ -890,24 +915,164 @@ void get_print_stmt(StringViewListView* view, const CompilerTarget target) {
 
 #define MAX_ARGS 6
 
+void get_inlined_function_call_stmt_intern(StringViewListView* restrict view, const CompilerTarget target, const Function f, const StringView* restrict f_name) {
+    // save local variables tail
+    const size_t var_table_length_snapshot = var_table_length;
+
+    const FunctionInlineInst inl = *f.inlining;
+
+    // printf("[DEBUG] call of function '"SV_format"' was inlined\n", SV_p_args(f_name));
+
+    // get and prepare args
+    uint8_t expected_args = f.arg_count;
+    if (expected_args > MAX_ARGS) {
+        srcmap_error(&source_map, f_name->start, "function '"SV_format"' declared with %i arguments, but only at most %i are supported", SV_p_args(f_name), f.arg_count, MAX_ARGS);
+        exit(1);
+    }
+
+    size_t i = 0;
+    while (expected_args > 0) {
+        StringView inspect = SVLV_inspect_back(view);
+        if (SV_pv_cmp_eq(&inspect, ")", 1)) {
+            srcmap_error(&source_map, f_name->start, "unexpected ')' in function '"SV_format"' call, expected another %u argument%c", SV_p_args(f_name), expected_args, expected_args > 1 ? 's' : ' ');
+            exit(1);
+        }
+
+
+        const Loc arg_val = get_int_expr(view, target, true);
+        if (arg_val.kind == LOC_IMMEDIATE && compiler_flags.constant_variable_resolution) {
+            declare_var(inl.args.array[i], VM_CONST, arg_val.value);
+        } else {
+            emit_mov_eax(code_output, arg_val, &global_patch_list, target);
+            const int slot = declare_var(inl.args.array[i], VM_RUNTIME, 0);
+
+            // MOV [rbp - slot], eax
+            if (slot <= 128) {
+                BS_write(code_output, 0x89);
+                BS_write(code_output, 0x45);
+                BS_write(code_output, (uint8_t) (-slot));
+            } else {
+                // 32-bit displacement path
+                const int32_t disp = -slot;
+
+                BS_write(code_output, 0x89);
+                BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
+
+                // Write 32-bit negative displacement (Little-Endian)
+                BS_write(code_output, (uint8_t)(disp & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+            }
+        }
+
+
+
+        expected_args--;
+        if (expected_args > 0) {
+            StringView comma = SVLV_consume_one(view);
+            if (!SV_pv_cmp_eq(&comma, ",", 1)) {
+                srcmap_error(&source_map, comma.start, "expected ',' function call args, got '"SV_format"'", SV_v_args(comma));
+                exit(1);
+            }
+        }
+        i += 1;
+    }
+
+    const StringView rbracket = SVLV_consume_one(view);
+    if (!SV_pv_cmp_eq(&rbracket, ")", 1)) {
+        srcmap_error(&source_map, rbracket.start, "in function '"SV_format"' call, expected ')' function call after args, got '"SV_format"'", SV_p_args(f_name), SV_v_args(rbracket));
+        exit(1);
+    }
+
+
+    StringViewListView block_view = inl.inlining_block_start;
+
+    const size_t original_function_end_id = function_end_id;
+
+    function_end_id = label_cnt++;
+
+    // compile inline part
+    get_stmt_block(&block_view, f.returns_value, target, true);
+
+    // define fn_end_<id>
+    LL_push(&labels, (Label){.offset = BS_get_cursor(code_output), .id = function_end_id, .kind = REL_END});
+
+    function_end_id = original_function_end_id;
+
+    // restore local variables
+    var_table_length = var_table_length_snapshot;
+
+    // retrieve return value
+    if (f.returns_value) {
+        const StringView semi_or_into = SVLV_inspect_back(view);
+        if (SV_pv_cmp_eq(&semi_or_into, ";", 1)) {
+            get_semicolon(view);
+        } else if (SV_pv_cmp_eq(&semi_or_into, "into", 4)) {
+            SVLV_consume_one(view); // into
+            const StringView into_var = SVLV_consume_one(view);
+
+            VarEntry* var = get_var(into_var);
+            materialize_const_var(var, false);
+
+            const int slot = lookup_var(into_var);
+
+            // MOV [rbp - slot], eax
+            if (slot <= 128) {
+                BS_write(code_output, 0x89);
+                BS_write(code_output, 0x45);
+                BS_write(code_output, (uint8_t) (-slot));
+            } else {
+                // 32-bit displacement path
+                const int32_t disp = -slot;
+
+                BS_write(code_output, 0x89);
+                BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
+
+                // Write 32-bit negative displacement (Little-Endian)
+                BS_write(code_output, (uint8_t)(disp & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+                BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+            }
+
+            get_semicolon(view);
+        } else {
+            srcmap_error(&source_map, semi_or_into.start, "expected either ';' or 'into' after function call, got '"SV_format"'", SV_v_args(semi_or_into));
+            exit(1);
+        }
+    } else {
+        get_semicolon(view);
+    }
+
+}
+
 void get_function_call_stmt(StringViewListView* restrict view, const CompilerTarget target, const StringView* restrict call_kw) {
     const StringView f_name = SVLV_consume_one(view);
     if (!FR_has_function(&functions_registry, f_name)) {
-        srcmap_error(&source_map, f_name.start, "function '%.*s' not found", (int)f_name.len, f_name.start);
+        srcmap_error(&source_map, f_name.start, "function '"SV_format"' not found", SV_v_args(f_name));
         exit(1);
     }
     const Function f = FR_lookup_function(&functions_registry, f_name);
 
     const StringView lbracket = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&lbracket, "(", 1)) {
-        srcmap_error(&source_map, lbracket.start, "expected '(' after function name in function call, got '%.*s'", (int)lbracket.len, lbracket.start);
+        srcmap_error(&source_map, lbracket.start, "expected '(' after function name in function call, got '"SV_format"'", SV_v_args(lbracket));
         exit(1);
     }
+
+    if (compiler_flags.function_inlining && f.can_be_inlined && !f.is_just_predef) {
+        get_inlined_function_call_stmt_intern(view, target, f, &f_name);
+        return;
+    }
+
+    // the function calling this can longer be a inlining candidate
+    function_inline_candidate = false;
 
 
     uint8_t expected_args = f.arg_count;
     if (expected_args > MAX_ARGS) {
-        srcmap_error(&source_map, f_name.start, "function '%.*s' declared with %i arguments, but only at most %i are supported", (int)f_name.len, f_name.start, f.arg_count, MAX_ARGS);
+        srcmap_error(&source_map, f_name.start, "function '"SV_format"' declared with %i arguments, but only at most %i are supported", SV_v_args(f_name), f.arg_count, MAX_ARGS);
         exit(1);
     }
     int* args_items = malloc(sizeof(int) * f.arg_count);
@@ -915,7 +1080,7 @@ void get_function_call_stmt(StringViewListView* restrict view, const CompilerTar
     while (expected_args > 0) {
         StringView inspect = SVLV_inspect_back(view);
         if (SV_pv_cmp_eq(&inspect, ")", 1)) {
-            srcmap_error(&source_map, f_name.start, "unexpected ')' in function '%.*s' call, expected another %u argument%c", (int)f_name.len, f_name.start, expected_args, expected_args > 1 ? 's' : ' ');
+            srcmap_error(&source_map, f_name.start, "unexpected ')' in function '"SV_format"' call, expected another %u argument%c",SV_v_args(f_name), expected_args, expected_args > 1 ? 's' : ' ');
             exit(1);
         }
         const int slot = alloc_stack_slot(&frame); // alloc_tmp_stack_slot
@@ -949,40 +1114,18 @@ void get_function_call_stmt(StringViewListView* restrict view, const CompilerTar
         if (expected_args > 0) {
             StringView comma = SVLV_consume_one(view);
             if (!SV_pv_cmp_eq(&comma, ",", 1)) {
-                srcmap_error(&source_map, comma.start, "expected ',' function call args, got '%.*s'", (int)comma.len, comma.start);
+                srcmap_error(&source_map, comma.start, "expected ',' function call args, got '"SV_format"'", SV_v_args(comma));
                 exit(1);
             }
         }
     }
 
-    StringView rbracket = SVLV_consume_one(view);
+    const StringView rbracket = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&rbracket, ")", 1)) {
-        srcmap_error(&source_map, rbracket.start, "in function '%.*s' call, expected ')' function call after args, got '%.*s'", (int) f_name.len, f_name.start, (int)rbracket.len, rbracket.start);
+        srcmap_error(&source_map, rbracket.start, "in function '"SV_format"' call, expected ')' function call after args, got '"SV_format"'", SV_v_args(f_name), SV_v_args(rbracket));
         exit(1);
     }
 
-    // // edi, esi, edx, ecx, r8d, r9d
-    // static const uint8_t arg_regs_modrm[] = {0x7D, 0x75, 0x55, 0x4D, 0x00, 0x00};
-    // // No REX prefix for edi/esi/edx/ecx; REX.R (0x44) needed for r8d/r9d
-    // static const uint8_t arg_regs_r8d_modrm[] = {0x45, 0x4D};
-    //
-    // for (int i = 0; i < f.arg_count; i++) {
-    //     const int slot = args_items[i];
-    //     if (i < 4) {
-    //         // MOV edi/esi/edx/ecx, [rbp - slot]
-    //         // 8B ModRM disp8  (no REX prefix)
-    //         BS_write(code_output, 0x8B);
-    //         BS_write(code_output, arg_regs_modrm[i]);
-    //         BS_write(code_output, (uint8_t)(-slot));
-    //     } else {
-    //         // MOV r8d/r9d, [rbp - slot]
-    //         // 44 8B ModRM disp8  (REX.R without REX.W)
-    //         BS_write(code_output, 0x44);
-    //         BS_write(code_output, 0x8B);
-    //         BS_write(code_output, arg_regs_r8d_modrm[i - 4]);
-    //         BS_write(code_output, (uint8_t)(-slot));
-    //     }
-    // }
     // edi, esi, edx, ecx, r8d, r9d
     static const uint8_t arg_regs_modrm[] = {0x7D, 0x75, 0x55, 0x4D, 0x00, 0x00};
     // No REX prefix for edi/esi/edx/ecx; REX.R (0x44) needed for r8d/r9d
@@ -1038,8 +1181,8 @@ void get_function_call_stmt(StringViewListView* restrict view, const CompilerTar
                            .offset = pos,
                            .relative = true,
                            .bit_size = 4,
-        .is_local = true,
-                       });
+                           .is_local = true,
+    });
 
 
     if (f.returns_value) {
@@ -1077,7 +1220,7 @@ void get_function_call_stmt(StringViewListView* restrict view, const CompilerTar
 
             get_semicolon(view);
         } else {
-            srcmap_error(&source_map, semi_or_into.start, "expected either ';' or 'into' after function call, got '%.*s'", (int)semi_or_into.len, semi_or_into.start);
+            srcmap_error(&source_map, semi_or_into.start, "expected either ';' or 'into' after function call, got '"SV_format"'", SV_v_args(semi_or_into));
             exit(1);
         }
     } else {
@@ -1085,17 +1228,17 @@ void get_function_call_stmt(StringViewListView* restrict view, const CompilerTar
     }
 }
 
-void get_stmt(StringViewListView* view, const bool should_return_value, const CompilerTarget target) {
+void get_stmt(StringViewListView* view, const bool should_return_value, const CompilerTarget target, const bool in_inlining) {
     const StringView s1 = SVLV_consume_one(view);
     if (SV_pv_cmp_eq(&s1, "int", 3)) {
         get_int_var_dec(view, target);
     } else if (SV_pv_cmp_eq(&s1, "set", 3)) {
         get_int_var_set(view, target);
     } else if (SV_pv_cmp_eq(&s1, "if", 2)) {
-        get_if_conditional(view, should_return_value, target);
+        get_if_conditional(view, should_return_value, target, in_inlining);
     } else if (SV_pv_cmp_eq(&s1, "while", 5)) {
         materialize_const_variables();
-        get_while_conditional(view, should_return_value, target);
+        get_while_conditional(view, should_return_value, target, in_inlining);
     } else if (SV_pv_cmp_eq(&s1, "print", 5)) {
         get_print_stmt(view, target);
     } else if (SV_pv_cmp_eq(&s1, "call", 4)) {
@@ -1113,6 +1256,7 @@ void get_function(StringViewListView* view, const CompilerTarget target) {
     create_frame();
 
     function_end_id = label_cnt++;
+    function_inline_candidate = true;
 
 
     const StringView ret_type = SVLV_consume_one(view);
@@ -1121,15 +1265,19 @@ void get_function(StringViewListView* view, const CompilerTarget target) {
         returns_value = true;
     } else if (SV_pv_cmp_eq(&ret_type, "void", 4)) {
     } else {
-        srcmap_error(&source_map, ret_type.start, "expected either 'int' or 'void' as return type, got '%.*s'", (int)ret_type.len, ret_type.start);
+        srcmap_error(&source_map, ret_type.start, "expected either 'int' or 'void' as return type, got '"SV_format"'", SV_v_args(ret_type));
         exit(1);
     }
 
     const StringView f_name = SVLV_consume_one(view);
 
+    if (SV_pv_cmp_eq(&f_name, "main", 4)) {
+        function_inline_candidate = false;
+    }
+
     const StringView f_args_start = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&f_args_start, "(", 1)) {
-        srcmap_error(&source_map, f_args_start.start, "expected '(', got '%.*s'", (int)f_args_start.len, f_args_start.start);
+        srcmap_error(&source_map, f_args_start.start, "expected '(', got '"SV_format"'", SV_v_args(f_args_start));
         exit(1);
     }
 
@@ -1147,7 +1295,7 @@ void get_function(StringViewListView* view, const CompilerTarget target) {
         } else if (SV_pv_cmp_eq(&comma, ",", 1)) {
             // ok
         } else {
-            srcmap_error(&source_map, comma.start, "expected ',' or ')', got '%.*s'", (int)comma.len, comma.start);
+            srcmap_error(&source_map, comma.start, "expected ',' or ')', got '"SV_format"'", SV_v_args(comma));
             exit(1);
         }
     }
@@ -1158,7 +1306,8 @@ void get_function(StringViewListView* view, const CompilerTarget target) {
                              .arg_count = f_args.len,
                              .offset = f_start_cursor,
                              .code_size = 0,
-                             .returns_value = returns_value
+                             .returns_value = returns_value,
+                             .is_just_predef = true,
                          });
 
 
@@ -1208,15 +1357,13 @@ void get_function(StringViewListView* view, const CompilerTarget target) {
 
     const uint8_t args_count = f_args.len;
 
-    SVL_p_free(&f_args);
 
-
-    get_stmt_block(view, returns_value, target);
-
+    StringViewListView f_block = *view;
+    get_stmt_block(view, returns_value, target, false);
 
     const StringView f_end = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&f_end, "end", 3)) {
-        srcmap_error(&source_map, f_end.start, "expected 'end', got '%.*s'", (int)f_end.len, f_end.start);
+        srcmap_error(&source_map, f_end.start, "expected 'end', got '"SV_format"'", SV_v_args(f_end));
         exit(1);
     }
 
@@ -1252,14 +1399,45 @@ void get_function(StringViewListView* view, const CompilerTarget target) {
     const size_t f_end_cursor = BS_get_cursor(code_output);
 
 
-    FR_overwrite_function(&functions_registry, (Function){
+    if (function_inline_candidate && compiler_flags.function_inlining) {
+        FunctionInlineInst* fii = malloc(sizeof(FunctionInlineInst));
+        assert(fii != NULL);
+
+        if (content_ptrs_len + 2 > content_ptrs_cap) {
+            content_ptrs_cap *= 2;
+            void** new_array = realloc(content_ptrs, content_ptrs_cap * sizeof(void*));
+            assert(new_array != NULL);
+            content_ptrs = new_array;
+        }
+        content_ptrs[content_ptrs_len++] = (void*)fii;
+        content_ptrs[content_ptrs_len++] = (void*)f_args.array;
+
+        fii->args = f_args;
+        fii->inlining_block_start = f_block;
+
+        FR_overwrite_function(&functions_registry, (Function){
                               .name = f_name,
                               .arg_count = args_count,
                               .offset = f_start_cursor,
                               .code_size = f_end_cursor - f_start_cursor,
-                              .returns_value = returns_value
-                          });
-
+                              .returns_value = returns_value,
+                              .can_be_inlined = true,
+                              .inlining = fii,
+                              .is_just_predef = false,
+        });
+    } else {
+        SVL_p_free(&f_args);
+        FR_overwrite_function(&functions_registry, (Function){
+                              .name = f_name,
+                              .arg_count = args_count,
+                              .offset = f_start_cursor,
+                              .code_size = f_end_cursor - f_start_cursor,
+                              .returns_value = returns_value,
+                              .can_be_inlined = false,
+                              .inlining = NULL,
+                              .is_just_predef = false,
+        });
+    }
 
     resolve_frame();
     // printf("[INFO] compiled function '%.*s'\n", (int)f_name.len, f_name.start);
@@ -1353,7 +1531,7 @@ void resolve_import(StringViewListView* list, const StringView* current_source_f
 
     if (content_ptrs_len + 1 > content_ptrs_cap) {
         content_ptrs_cap *= 2;
-        char** new_array = realloc(content_ptrs, content_ptrs_cap * sizeof(char *));
+        void** new_array = realloc(content_ptrs, content_ptrs_cap * sizeof(void*));
         assert(new_array != NULL);
         content_ptrs = new_array;
     }
@@ -1382,13 +1560,13 @@ void get_global_var(StringViewListView* view, const CompilerTarget target) {
     SVLV_consume_one(view); // for `global`
     const StringView type = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&type, "int", 3)) {
-        srcmap_error(&source_map, type.start, "globals can only be of type 'int', got '%.*s'", (int) type.len, type.start);
+        srcmap_error(&source_map, type.start, "globals can only be of type 'int', got '"SV_format"'", SV_v_args(type));
         exit(1);
     }
     StringView name = SVLV_consume_one(view);
     StringView assign = SVLV_consume_one(view);
     if (!SV_pv_cmp_eq(&assign, ":", 1)) {
-        srcmap_error(&source_map, assign.start, "expected ':' after name in global variable declaration, got '%.*s'", (int) assign.len, assign.start);
+        srcmap_error(&source_map, assign.start, "expected ':' after name in global variable declaration, got '"SV_format"'", SV_v_args(assign));
         exit(1);
     }
     // printf("in GLOBAL: var_table_length = %lu\n", var_table_length);
@@ -1407,7 +1585,7 @@ void get_global_var(StringViewListView* view, const CompilerTarget target) {
 
 
             if (GR_has_global(&globals_registry, name)) {
-                srcmap_error(&source_map, name.start, "redeclaration of global variable '%.*s'", (int)name.len, name.start);
+                srcmap_error(&source_map, name.start, "redeclaration of global variable '"SV_format"'", SV_v_args(name));
                 exit(1);
             }
 
@@ -1433,7 +1611,7 @@ void get_global_var(StringViewListView* view, const CompilerTarget target) {
             BS_write_array(code_output, sizeof(store), store);
 
             if (GR_has_global(&globals_registry, name)) {
-                srcmap_error(&source_map, name.start, "redeclaration of global variable '%.*s'", (int)name.len, name.start);
+                srcmap_error(&source_map, name.start, "redeclaration of global variable '"SV_format"'", SV_v_args(name));
                 exit(1);
             }
 
@@ -1701,6 +1879,7 @@ void process_elf64(const StringView* restrict input, const StringView* restrict 
                              .code_size = sizeof(rt_zero_div_handler),
                              .returns_value = false,
                              .arg_count = 0,
+        .is_just_predef = false,
                          });
 
     FR_register_function(&functions_registry, (Function){
@@ -1709,6 +1888,7 @@ void process_elf64(const StringView* restrict input, const StringView* restrict 
                              .code_size = sizeof(print_char_util),
                              .returns_value = false,
                              .arg_count = 0,
+        .is_just_predef = false,
                          });
 
 
@@ -1718,6 +1898,7 @@ void process_elf64(const StringView* restrict input, const StringView* restrict 
                              .code_size = code_output_globals.len,
                              .returns_value = false,
                              .arg_count = 0,
+        .is_just_predef = false,
                          });
 
     resolve_function_calls(code_output->array, code_output_funcs.len - code_output_globals.len, &functions_registry, &function_patch_list);
@@ -1728,6 +1909,7 @@ void process_elf64(const StringView* restrict input, const StringView* restrict 
                              .code_size = sizeof(entry_point),
                              .returns_value = false,
                              .arg_count = 0,
+        .is_just_predef = false,
                          });
 
     for (size_t n = 0; n < functions_registry.len; n++) {
@@ -1977,6 +2159,7 @@ void process_win64(const StringView* restrict input, const StringView* restrict 
                              .code_size = sizeof(rt_zero_div_handler), // 0
                              .returns_value = false,
                              .arg_count = 0,
+        .is_just_predef = false,
                          });
 
     FR_register_function(&functions_registry, (Function){
@@ -1985,6 +2168,7 @@ void process_win64(const StringView* restrict input, const StringView* restrict 
                              .code_size = sizeof(print_char_util),
                              .returns_value = false,
                              .arg_count = 0,
+        .is_just_predef = false,
                          });
 
     FR_register_function(&functions_registry, (Function){
@@ -1993,6 +2177,7 @@ void process_win64(const StringView* restrict input, const StringView* restrict 
                              .code_size = code_output_globals.len,
                              .returns_value = false,
                              .arg_count = 0,
+        .is_just_predef = false,
                          });
 
     BS_write_array(code_output, code_output_globals.len, code_output_globals.array);
@@ -2006,6 +2191,7 @@ void process_win64(const StringView* restrict input, const StringView* restrict 
                              .code_size = sizeof(entry_point),
                              .returns_value = false,
                              .arg_count = 0,
+        .is_just_predef = false,
                          });
 
     for (size_t n = 0; n < functions_registry.len; n++) {

@@ -91,11 +91,20 @@ void LL_push(LabelList*, Label);
 // -----------------------------------------------------------------------------------------
 
 typedef struct {
+    StringViewListView inlining_block_start;
+    StringViewList args;
+} FunctionInlineInst;
+
+typedef struct {
     StringView name;
     size_t offset;
     size_t code_size;
     bool returns_value;
     uint8_t arg_count;
+    bool is_just_predef;
+
+    bool can_be_inlined;
+    FunctionInlineInst* inlining; // NULL if can_be_inlined is false
 } Function;
 
 typedef struct {

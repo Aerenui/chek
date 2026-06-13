@@ -291,9 +291,25 @@ Loc get_int_expr(StringViewListView* view, const CompilerTarget target, const bo
                     case LOC_VAR:
                     case LOC_STACK_SLOT: {
                         const int slot = (s2.kind == LOC_VAR) ? lookup_var(s2.var) : s2.offset;
-                        BS_write(code_output, 0x3B); // CMP eax, [rbp-slot]
-                        BS_write(code_output, 0x45);
-                        BS_write(code_output, (uint8_t) (-slot));
+
+                        // CMP eax, [rbp - slot]
+                        if (slot <= 128) {
+                            BS_write(code_output, 0x3B);
+                            BS_write(code_output, 0x45);               // ModR/M for [rbp + disp8]
+                            BS_write(code_output, (uint8_t) (-slot));
+                        } else {
+                            // 32-bit displacement path
+                            const int32_t disp = -slot;
+
+                            BS_write(code_output, 0x3B);
+                            BS_write(code_output, 0x85);               // ModR/M for [rbp + disp32]
+
+                            // Write 32-bit negative displacement (Little-Endian)
+                            BS_write(code_output, (uint8_t)(disp & 0xFF));
+                            BS_write(code_output, (uint8_t)((disp >> 8) & 0xFF));
+                            BS_write(code_output, (uint8_t)((disp >> 16) & 0xFF));
+                            BS_write(code_output, (uint8_t)((disp >> 24) & 0xFF));
+                        }
                         break;
                     }
                     case LOC_GLOBAL: {
@@ -615,41 +631,41 @@ Loc get_int_expr(StringViewListView* view, const CompilerTarget target, const bo
                 size_t global_index = GR_lookup_global_index(&globals_registry, sv);
                 LS_push(&stack2, (Loc){.kind = LOC_GLOBAL, .offset = (int)global_index});
             } else {
-                srcmap_error(&source_map, sv.start, "undefined variable '%.*s'", (int)sv.len, sv.start);
+                srcmap_error(&source_map, sv.start, "undefined variable '"SV_format"'", SV_v_args(sv));
                 exit(1);
             }
         } else {
             // numeric literal
             if (sv.len > 60) {
-                srcmap_error(&source_map, sv.start, "malformed integer '%.*s'", (int)sv.len, sv.start);
+                srcmap_error(&source_map, sv.start, "malformed integer '"SV_format"'", SV_v_args(sv));
                 exit(1);
             }
             char buf[64]; // or malloc if dynamic
-            snprintf(buf, sizeof(buf), "%.*s", (int)sv.len, sv.start);
+            snprintf(buf, sizeof(buf), SV_format, SV_v_args(sv));
             char *end;
             errno = 0;
             const long val = strtol(buf, &end, 10);
 
             // overflow/underflow
             if (errno != 0) {
-                srcmap_error(&source_map, sv.start, "value does not fit into integer '%.*s'", (int)sv.len, sv.start);
+                srcmap_error(&source_map, sv.start, "value does not fit into integer '"SV_format"'", SV_v_args(sv));
                 exit(1);
             }
 
             // no digits consumed
             if (end == sv.start) {
-                srcmap_error(&source_map, sv.start, "malformed integer '%.*s'", (int)sv.len, sv.start);
+                srcmap_error(&source_map, sv.start, "malformed integer '"SV_format"'", SV_v_args(sv));
                 exit(1);
             }
 
             // trailing garbage
             if (*end != '\0') {
-                srcmap_error(&source_map, sv.start, "malformed integer '%.*s'", (int)sv.len, sv.start);
+                srcmap_error(&source_map, sv.start, "malformed integer '"SV_format"'", SV_v_args(sv));
                 exit(1);
             }
 
             if (val < INT_MIN || val > INT_MAX) {
-                srcmap_error(&source_map, sv.start, "value does not fit into integer '%.*s'", (int)sv.len, sv.start);
+                srcmap_error(&source_map, sv.start, "value does not fit into integer '"SV_format"'", SV_v_args(sv));
                 exit(1);
             }
             LS_push(&stack2, (Loc){.kind = LOC_IMMEDIATE, .value = (int)val});

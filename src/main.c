@@ -98,8 +98,7 @@ int main(const int argc, char* argv[]) {
             } else if (SV_pv_cmp_eq(&fmt, "elf64", 5)) {
                 target = F_Elf64;
             } else {
-                fprintf(stderr, "[ERROR] -t: unknown target '%.*s' (expected win64 or elf64)\n",
-                        (int)fmt.len, fmt.start);
+                fprintf(stderr, "[ERROR] -t: unknown target '"SV_format"' (expected win64 or elf64)\n", SV_v_args(fmt));
                 SVL_p_free(&args);
                 return 1;
             }
@@ -113,13 +112,13 @@ int main(const int argc, char* argv[]) {
 
     if (input_src_path.start == NULL) {
         fprintf(stderr, "[ERROR] expected one argument\n");
-        printf("[USAGE] %.*s [-o <out>] [-O 0|1] [-t win64|elf64] <src>\n"
+        printf("[USAGE] "SV_format" [-o <out>] [-O 0|1] [-t win64|elf64] <src>\n"
                "\t-o <out>\t output executable path [default: out]\n"
                "\t-O <opt_level>\t level of optimization (0, 1 or 2) [default: 2]\n"
                "\t-t <target>\t target platform (elf64, or win64) %s\n"
                "\t<src>\t\t source file\n",
                // ReSharper disable line CppDFAConstantConditions
-               (int)args.array[0].len, args.array[0].start, has_target_default && default_target == F_Elf64 ? "[default: elf64]" : (has_target_default && default_target == F_Win64 ? "[default: win64]" : ""));
+               SV_v_args(args.array[0]), has_target_default && default_target == F_Elf64 ? "[default: elf64]" : (has_target_default && default_target == F_Win64 ? "[default: win64]" : ""));
         SVL_p_free(&args);
         return 1;
     }
@@ -156,6 +155,7 @@ int main(const int argc, char* argv[]) {
                 .constant_variable_resolution = false,
                 .constant_branch_evaluation = false,
                 .algebraic_optimization = false,
+                .function_inlining = false,
             };
             break;
         }
@@ -165,6 +165,7 @@ int main(const int argc, char* argv[]) {
                 .constant_variable_resolution = false,
                 .constant_branch_evaluation = false,
                 .algebraic_optimization = true,
+                .function_inlining = false,
             };
             break;
         }
@@ -174,6 +175,7 @@ int main(const int argc, char* argv[]) {
                 .constant_variable_resolution = true,
                 .constant_branch_evaluation = true,
                 .algebraic_optimization = true,
+                .function_inlining = true,
             };
             break;
         }

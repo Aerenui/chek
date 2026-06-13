@@ -9,6 +9,7 @@ typedef struct {
     bool constant_variable_resolution;
     bool constant_branch_evaluation;
     bool algebraic_optimization;
+    bool function_inlining;
 } CompilerFlags;
 
 // shared state across the compiler

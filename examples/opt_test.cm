@@ -17,5 +17,6 @@ end
 
 int main()
     call while_opt();
+    call arithmetic_opt(2);
     return 0;
 end

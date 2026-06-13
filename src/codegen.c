@@ -395,7 +395,7 @@ inline void FR_free(const FunctionsRegistry* fr) {
 
 void FR_register_function(FunctionsRegistry* fr, const Function f) {
     if (FR_has_function(fr, f.name)) {
-        fprintf(stderr, "[ERROR] inserting function when function with that name already exists, '%.*s'\n", (int)f.name.len, f.name.start);
+        fprintf(stderr, "[ERROR] inserting function when function with that name already exists, '"SV_format"'\n", SV_v_args(f.name));
         exit(1);
     }
     if (fr->len + 1 > fr->cap) {
@@ -508,7 +508,7 @@ Global GR_lookup_global(const GlobalsRegistry* gr, const StringView g) {
             return gr->array[n];
         }
     }
-    fprintf(stderr, "[ERROR] <internal> global variable lookup of non-existent variable '%.*s'\n", (int)g.len, g.start);
+    fprintf(stderr, "[ERROR] <internal> global variable lookup of non-existent variable '"SV_format"'\n", SV_v_args(g));
     exit(1);
 }
 
@@ -518,7 +518,7 @@ size_t GR_lookup_global_index(const GlobalsRegistry* gr, const StringView g) {
             return n;
         }
     }
-    fprintf(stderr, "[ERROR] <internal> global variable index lookup of non-existent variable '%.*s'\n", (int)g.len, g.start);
+    fprintf(stderr, "[ERROR] <internal> global variable index lookup of non-existent variable '"SV_format"'\n", SV_v_args(g));
     exit(1);
 }
 
@@ -605,7 +605,7 @@ void resolve_function_calls(uint8_t* restrict array, const size_t local_code_siz
         const FunctionCallPatch* patch = &patches->array[i];
 
         if (!FR_has_function(fr, patch->name)) {
-            fprintf(stderr, "[ERROR] unknown function '%.*s'\n", (int)patch->name.len, patch->name.start);
+            fprintf(stderr, "[ERROR] unknown function '"SV_format"'\n", SV_v_args(patch->name));
             exit(1);
         }
 
