@@ -1,9 +1,10 @@
 # chek
 
 A zero-copy, single-pass, no-dependency, no-IR native compiler written in C.
+
 Supported targets: elf-x86_64 and win64-x86_64.
 
-Supports only one data type `int` which is 32-bit signed integer. There are **no** string or char literals for now.
+Supports only one data type `int` which is 32-bit signed integer. There are **no** string or char literals.
 
 Currently, elf-x86_64 and win64-x86_64 targets both use System V AMD64 ABI internally. 
 Since there is no support for FFI and binaries are self-contained, so ABi compatibility with native Win64 is not required.
@@ -42,6 +43,10 @@ Backend
 - x86-64 code generation
 - ELF64 emitter
 - Win64 emitter
+
+## License
+
+This project is licensed under the MIT License - see the `LICENSE` file for details.
 
 ## building from source (linux)
 
