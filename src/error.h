@@ -1,7 +1,3 @@
-//
-// Created by frantisek on 9. 6. 2026.
-//
-
 #ifndef SIMPLECOMPILERINC_2_ERROR_H
 #define SIMPLECOMPILERINC_2_ERROR_H
 #include <stddef.h>

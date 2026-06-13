@@ -1342,7 +1342,10 @@ void resolve_import(StringViewListView* list, const StringView* current_source_f
 
     char resolved_path_raw[PATH_MAX];
 
-    resolve_import_path(source_path_c, path_c, resolved_path_raw);
+    if (resolve_import_path(source_path_c, path_c, resolved_path_raw) != 1) {
+        srcmap_error(&source_map, path.start, "file not found");
+        exit(1);
+    }
 
     const StringView resolved_path = SV_from_string(resolved_path_raw);
 

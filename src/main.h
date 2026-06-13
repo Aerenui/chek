@@ -2,6 +2,10 @@
 #define SIMPLECOMPILERINC_2_MAIN_H
 #include <stdbool.h>
 
+#ifdef _MSC_VER
+    #define restrict __restrict
+#endif
+
 typedef enum  { F_Elf64, F_Win64 } CompilerTarget;
 
 typedef struct {

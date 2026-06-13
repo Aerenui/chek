@@ -8,7 +8,7 @@
 
 
 char* read_file(const char*, size_t*);
-void resolve_import_path(const char* importing_file, const char* import_path, char* out);
+int resolve_import_path(const char* importing_file, const char* import_path, char* out);
 
 typedef struct {
     const char* start;

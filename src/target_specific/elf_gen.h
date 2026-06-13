@@ -1,7 +1,3 @@
-//
-// Created by frantisek on 26. 5. 2026.
-//
-
 #ifndef SIMPLECOMPILERINC_2_ELF_GEN_H
 #define SIMPLECOMPILERINC_2_ELF_GEN_H
 #include <stdint.h>

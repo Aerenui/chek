@@ -4,15 +4,15 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
-#include <limits.h>
 #include <stdlib.h>
 
 
-#if defined(_WIN32) || defined(__MINGW32__)
-  #include <stdlib.h>
-  #define realpath(rel, abs) _fullpath((abs), (rel), PATH_MAX)
+#ifdef _WIN32
+    #ifndef PATH_MAX
+        #define PATH_MAX _MAX_PATH
+    #endif
 #else
-  #include <stdlib.h>
+    #include <linux/limits.h>
 #endif
 
 char* read_file(const char *path, size_t *out_len) {
@@ -54,24 +54,56 @@ char* read_file(const char *path, size_t *out_len) {
     return buf;
 }
 
+int resolve_import_path( const char* restrict importing_file, const char* restrict import_path, char* restrict out) {
+    char combined[PATH_MAX];
 
-void resolve_import_path(const char* restrict importing_file, const char* restrict import_path, char* restrict out) {
-    char dir[PATH_MAX];
-    // strncpy(dir, importing_file, PATH_MAX); // PATH_MAX is guaranteed by realpath that produced import_path
-    strcpy(dir, importing_file);
+    const char* slash = strrchr(importing_file, '/');
+#ifdef _WIN32
+    const char* slash2 = strrchr(importing_file, '\\');
+    if (!slash || (slash2 && slash2 > slash))
+        slash = slash2;
+#endif
 
-    char* last_slash = strrchr(dir, '/');
-    if (last_slash) {
-        *(last_slash + 1) = '\0';
+    if (slash) {
+        const size_t len = (size_t)(slash - importing_file) + 1;
+        if (len >= PATH_MAX) return 0;
+        memcpy(combined, importing_file, len);
+        combined[len] = '\0';
+        strncat(combined, import_path, PATH_MAX - len - 1);
     } else {
-        strcpy(dir, "./");
+        if (snprintf(combined, sizeof(combined), "./%s", import_path) >= (int)sizeof(combined))
+            return 0;
     }
 
-    char combined[PATH_MAX];
-    snprintf(combined, PATH_MAX, "%s%s", dir, import_path);
-
-    realpath(combined, out);
+#ifdef _WIN32
+    return _fullpath(out, combined, PATH_MAX) != NULL;
+#else
+    return realpath(combined, out) != NULL;
+#endif
 }
+
+// void resolve_import_path(const char* restrict importing_file, const char* restrict import_path, char* restrict out) {
+//     char dir[PATH_MAX];
+//     // strncpy(dir, importing_file, PATH_MAX); // PATH_MAX is guaranteed by realpath that produced import_path
+//     strcpy(dir, importing_file);
+//
+//     char* last_slash = strrchr(dir, '/');
+//     if (last_slash) {
+//         *(last_slash + 1) = '\0';
+//     } else {
+//         strcpy(dir, "./");
+//     }
+//
+//     char combined[PATH_MAX];
+//     snprintf(combined, PATH_MAX, "%s%s", dir, import_path);
+//
+//     // realpath(combined, out);
+//     #ifdef _WIN32
+//         _fullpath(out, combined, PATH_MAX);
+//     #else
+//         realpath(combined, out);
+//     #endif
+// }
 
 
 

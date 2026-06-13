@@ -265,14 +265,14 @@ Include copies over the contents and compiles it before the contents of importer
 When the path is relative, it is resolved from the point of the importer's location. 
 > `include "<path>";`
 ```
-include "libs/print_int.cm";
+include "libs/print_int.ce";
 ```
 
 ## compilation errors
 
 example:
 ```text
-examples/errors/unknown_var.cm:4:12: error: undefined variable 'b'
+examples/errors/unknown_var.ce:4:12: error: undefined variable 'b'
       int a: b + 5;
              ^
 ```

@@ -1,8 +1,8 @@
 
 #ifndef SIMPLECOMPILERINC_2_X86_64_H
 #define SIMPLECOMPILERINC_2_X86_64_H
-#include "codegen.h"
-#include "utils.h"
+#include "../codegen.h"
+#include "../utils.h"
 
 
 void emit_mov_eax(ByteSeg* out, Loc src, GlobalPatchList* gpl, CompilerTarget target);
